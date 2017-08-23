@@ -1,7 +1,7 @@
 import re
 import fileinput
 import numpy as np
-from copy import copy
+from copy import copy, deepcopy
 import os
 
 class RwxState:
@@ -69,7 +69,7 @@ class RwxScope:
 
     @property
     def verts_uv(self):
-        return [vert.uv for vert in self.vertices]
+        return [[vert.uv[0], 1.0-vert.uv[1] if vert.uv[1] else None] for vert in self.vertices]
     
     @property
     def faces_uv(self):
@@ -109,6 +109,11 @@ class RwxClump(RwxScope):
                "--clumps:%s" % os.linesep +\
                os.linesep.join(clumps)
 
+    def apply_proto(self, proto):
+        self.state = copy(proto.state)
+        self.vertices = copy(proto.vertices)
+        self.shapes = copy(proto.shapes)
+
         
 class RwxProto(RwxScope):
     
@@ -127,18 +132,6 @@ class RwxShape:
     def __call__(self):
         
         return []
-
-    def normal(self, vertices):
-
-        U = (vertices[self.vertices_id[1]][0]-vertices[self.vertices_id[0]][0],\
-             vertices[self.vertices_id[1]][1]-vertices[self.vertices_id[0]][1],\
-             vertices[self.vertices_id[1]][2]-vertices[self.vertices_id[0]][2])
-
-        V = (vertices[self.vertices_id[2]][0]-vertices[self.vertices_id[0]][0],\
-             vertices[self.vertices_id[2]][1]-vertices[self.vertices_id[0]][1],\
-             vertices[self.vertices_id[2]][2]-vertices[self.vertices_id[0]][2])
-        
-        return (U[1]*V[2]-U[2]*V[1], U[2]*V[0]-U[0]*V[2], U[0]*V[1]*U[1]*V[0])
 
         
 class RwxTriangle(RwxShape):
@@ -277,13 +270,20 @@ class RwxParser:
 
                 res = self._protoend_regex.match(line)
                 if res:
-                    self._current_scope = self._rwx_clump_stack[-1]
+                    self._current_scope = self._rwx_clump_stack[0]
+                    continue
+
+                res = self._protoinstance_regex.match(line)
+                if res:
+                    name = res.group(2)
+                    self._current_scope.apply_proto(self._rwx_proto_dict[name])
                     continue
 
                 res = self._texture_regex.match(line)
                 if res:
                     self._current_scope.state.texture = None if res.group(2).lower() == "null" else res.group(2)
-
+                    continue
+                    
                 res = self._triangle_regex.match(line)
                 if res:
                     v_id = [ int(x) for x in self._integer_regex.findall(res.group(2)) ]

@@ -1,15 +1,29 @@
 import sys
 import os
+from math import radians
 sys.path.append("/home/blax/Projects/rwx2blender")
 
 from rwx import RwxParser
 import bpy
 import bmesh
 
+
+def add_attr_recursive(clump, name):
+
+    attr = []
+    attr.extend(getattr(clump, name))
+    
+    for c in clump.clumps:
+        attr.extend(add_attr_recursive(c, name))
+
+    return attr
+
+
 def make_materials_recursive(ob, clump, folder, extension = "jpg"):
 
     for shape in clump.shapes:
         # Get material
+        
         mat = bpy.data.materials.get(shape.state.texture)
         if mat is None:
             # create material
@@ -31,19 +45,19 @@ def make_materials_recursive(ob, clump, folder, extension = "jpg"):
                 unassigned = False
         
         if unassigned: ob.data.materials.append(mat)
-
+        
     for sub_clump in clump.clumps:
         make_materials_recursive(ob, sub_clump, folder, extension)
     
 
-parser = RwxParser("/home/blax/Projects/rwx2blender/toilette1.rwx")
+parser = RwxParser("/home/blax/Projects/rwx2blender/tracteur1.rwx")
 rwx_object = parser()
 
-verts = rwx_object.clumps[0].verts
+verts = add_attr_recursive(rwx_object.clumps[0], "verts")
 edges = []
-faces = rwx_object.clumps[0].faces
-faces_state = rwx_object.clumps[0].faces_state
-faces_uv = rwx_object.clumps[0].faces_uv
+faces = add_attr_recursive(rwx_object.clumps[0], "faces")
+faces_state = add_attr_recursive(rwx_object.clumps[0], "faces_state")
+faces_uv = add_attr_recursive(rwx_object.clumps[0], "faces_uv")
 
 mesh = bpy.data.meshes.new('Mesh')
 ob = bpy.data.objects.new('Object', mesh)
@@ -63,11 +77,18 @@ for i, f in enumerate(bm.faces):
     for j, l in enumerate(f.loops):
         l[uv_layer].uv = faces_uv[i][j]
 
+
 bm.to_mesh(mesh)
 bm.free()
 
+mesh.use_auto_smooth = True
+mesh.auto_smooth_angle = 3.14/3.0 
+mesh.calc_normals()
+
 ob.location = (0,0,0)
-ob.show_name = True
+ob.scale = (10,10,10)
+ob.rotation_euler = (radians(90), 0, 0)
+ob.show_name = True 
 # Link object to scene
 bpy.context.scene.objects.link(ob)
 
