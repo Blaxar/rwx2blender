@@ -3,6 +3,7 @@ import fileinput
 import numpy as np
 from copy import copy, deepcopy
 import os
+import numpy as np
 
 class RwxState:
 
@@ -69,7 +70,7 @@ class RwxScope:
 
     @property
     def verts_uv(self):
-        return [[vert.uv[0], 1.0-vert.uv[1] if vert.uv[1] else None] for vert in self.vertices]
+        return [[vert.uv[0], 1.0-vert.uv[1] if vert.uv[1] is not None else None] for vert in self.vertices]
     
     @property
     def faces_uv(self):
@@ -217,7 +218,7 @@ class RwxParser:
     _triangle_regex = re.compile("^ *(triangle|triangleext)(( +([0-9]+)){3}).*$", re.IGNORECASE)
     _texture_regex = re.compile("^ *(texture) +([A-Za-z0-9_\\-]+).*$", re.IGNORECASE)
     _color_regex = re.compile("^ *(color)( +[-+]?[0-9]*\\.?[0-9]+){3}.*$", re.IGNORECASE)
-    _transform_regex = re.compile("^ *(transform)( +[-+]?[0-9]*\\.?[0-9]+){16}.*$", re.IGNORECASE)
+    _transform_regex = re.compile("^ *(transform)(( +[-+]?[0-9]*\\.?[0-9]+){16}).*$", re.IGNORECASE)
     _scale_regex = re.compile("^ *(scale)( +([0-9]+)){3}.*$", re.IGNORECASE)
     _rotate_regex = re.compile("^ *(rotate)( +[-+]?[0-9]*\\.?[0-9]+){4}.*$", re.IGNORECASE)
 
@@ -314,7 +315,10 @@ class RwxParser:
                     else: self._current_scope.vertices.append(RwxVertex(vprops[0], vprops[1], vprops[2]))
                     continue
 
-        #print(self._rwx_clump_stack[0])
+                res = self._transform_regex.match(line)
+                if res:
+                    tprops = [ float(x) for x in self._float_regex.findall(res.group(2)) ]
+                    if len(tprops) == 16: self._current_scope.state.transform = np.matrix(tprops).reshape((4,4)).T
 
     def __call__(self):
         return self._rwx_clump_stack[0]
