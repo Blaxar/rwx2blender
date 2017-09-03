@@ -111,9 +111,19 @@ class RwxClump(RwxScope):
                os.linesep.join(clumps)
 
     def apply_proto(self, proto):
-        self.state = copy(proto.state)
-        self.vertices = copy(proto.vertices)
-        self.shapes = copy(proto.shapes)
+        
+        offset = len(self.vertices)
+
+        shapes = copy(proto.shapes)
+        for shape in shapes:
+            for i, vid in enumerate(shape.vertices_id):
+                shape.vertices_id[i] += offset
+        
+        self.shapes.extend(shapes)
+
+        for i, vert in enumerate(proto.vertices):
+            mat = proto.state.transform * np.matrix([vert.x, vert.y, vert.z, 1]).reshape((4,1))
+            self.vertices.append(RwxVertex(mat[0], mat[1], mat[2], u=vert.u, v=vert.v))
 
         
 class RwxProto(RwxScope):
@@ -140,7 +150,7 @@ class RwxTriangle(RwxShape):
     def __init__(self, v1, v2, v3, **kwargs):
         
         super().__init__(**kwargs)
-        self.vertices_id = (v1, v2, v3)
+        self.vertices_id = [v1, v2, v3]
 
     def __call__(self):
         
@@ -152,7 +162,7 @@ class RwxQuad(RwxShape):
     def __init__(self, v1, v2, v3, v4, **kwargs):
         
         super().__init__(**kwargs)
-        self.vertices_id = (v1, v2, v3, v4)
+        self.vertices_id = [v1, v2, v3, v4]
 
     def __call__(self):
         
@@ -298,14 +308,14 @@ class RwxParser:
                     self._current_scope.shapes.append(RwxQuad(v_id[0], v_id[1], v_id[2], v_id[3],\
                                                               state=self._current_scope.state))
                     continue
-
+                
                 res = self._polygon_regex.match(line)
                 if res:
                     v_id = [ int(x) for x in self._integer_regex.findall(res.group(3)) ]
                     self._current_scope.shapes.append(RwxPolygon(v_id,\
                                                                  state=self._current_scope.state))
                     continue
-
+                
                 res = self._vertex_regex.match(line)
                 if res:
                     vprops = [ float(x) for x in self._float_regex.findall(res.group(2)) ]

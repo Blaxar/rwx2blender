@@ -82,7 +82,7 @@ def make_materials_recursive(ob, clump, folder, extension = "jpg"):
         make_materials_recursive(ob, sub_clump, folder, extension)
     
 
-parser = RwxParser("/home/blax/Projects/rwx2blender/tracteur1.rwx")
+parser = RwxParser("/home/blax/Projects/rwx2blender/subtracteur1.rwx")
 rwx_object = parser()
 
 verts = add_vertices_recursive(rwx_object.clumps[0])
