@@ -2,13 +2,13 @@ import sys
 import os
 import re
 import fileinput
-import numpy as np
 from copy import copy, deepcopy
 from math import radians
-import mathutils
+import mathutils as mu
 import bpy
 from bpy.props import *
 import bmesh
+from traceback import print_exc
 
 bl_info = {"name": "rwx2blender",
            "author": "Julien Bardagi (Blaxar Waldarax)",
@@ -30,7 +30,7 @@ class RwxState:
         self.texturemodes = None
         self.materialmodes = None
         self.texture = None
-        self.transform = np.identity(4)
+        self.transform = mu.Matrix.Identity(4)
 
 
 class RwxVertex:
@@ -135,7 +135,7 @@ class RwxClump(RwxScope):
         self.shapes.extend(shapes)
 
         for i, vert in enumerate(proto.vertices):
-            mat = proto.state.transform * np.matrix([vert.x, vert.y, vert.z, 1]).reshape((4,1))
+            mat = proto.state.transform * mu.Vector([vert.x, vert.y, vert.z, 1])
             self.vertices.append(RwxVertex(mat[0], mat[1], mat[2], u=vert.u, v=vert.v))
 
         
@@ -225,7 +225,7 @@ class RwxParser:
 
     # Begin regex list
 
-    _integer_regex = re.compile("([0-9]+)")
+    _integer_regex = re.compile("([-+]?[0-9]+)")
     _float_regex = re.compile("([-+]?[0-9]*\\.?[0-9]+)")
     _non_comment_regex = re.compile("^(.*)#")
     _modelbegin_regex = re.compile("^ *(modelbegin).*$", re.IGNORECASE)
@@ -242,10 +242,10 @@ class RwxParser:
     _texture_regex = re.compile("^ *(texture) +([A-Za-z0-9_\\-]+).*$", re.IGNORECASE)
     _color_regex = re.compile("^ *(color)( +[-+]?[0-9]*\\.?[0-9]+){3}.*$", re.IGNORECASE)
     _transform_regex = re.compile("^ *(transform)(( +[-+]?[0-9]*\\.?[0-9]+){16}).*$", re.IGNORECASE)
-    _scale_regex = re.compile("^ *(scale)( +([0-9]+)){3}.*$", re.IGNORECASE)
-    _rotate_regex = re.compile("^ *(rotate)( +[-+]?[0-9]*\\.?[0-9]+){4}.*$", re.IGNORECASE)
-        
-    
+    _scale_regex = re.compile("^ *(scale)(( +[-+]?[0-9]*\\.?[0-9]+){3}).*$", re.IGNORECASE)
+    _rotate_regex = re.compile("^ *(rotate)(( +[-+]?[0-9]*){4})$", re.IGNORECASE)
+
+
     def __init__(self, uri):
         
         self._rwx_clump_stack = []
@@ -338,12 +338,31 @@ class RwxParser:
                 res = self._transform_regex.match(line)
                 if res:
                     tprops = [ float(x) for x in self._float_regex.findall(res.group(2)) ]
-                    if len(tprops) == 16: self._current_scope.state.transform = np.matrix(tprops).reshape((4,4)).T
+                    if len(tprops) == 16: self._current_scope.state.transform = mu.Matrix(list(zip(*[iter(tprops)]*4))).transposed()
 
+                res = self._rotate_regex.match(line)
+                if res:
+                    rprops = [ int(x) for x in self._integer_regex.findall(res.group(2)) ]
+                    if len(rprops) == 4:
+                        if rprops[0]:
+                            self._current_scope.state.transform =\
+                            mu.Matrix.Rotation(radians(-rprops[3]), 4, 'X') * self._current_scope.state.transform
+                        if rprops[1]:
+                            self._current_scope.state.transform =\
+                            mu.Matrix.Rotation(radians(-rprops[3]), 4, 'Y') * self._current_scope.state.transform
+                        if rprops[2]:
+                            self._current_scope.state.transform =\
+                            mu.Matrix.Rotation(radians(-rprops[3]), 4, 'Z') * self._current_scope.state.transform
+                    
                 res = self._scale_regex.match(line)
                 if res:
                     sprops = [ float(x) for x in self._float_regex.findall(res.group(2)) ]
-                    if len(sprops) == 16: self._current_scope.state.transform *= np.matrix(tprops).reshape((4,4)).T
+                    if len(sprops) == 3:
+                        self._current_scope.state.transform =\
+                        mu.Matrix.Scale(sprops[0], 4, (1.0, 0.0, 0.0)) *\
+                        mu.Matrix.Scale(sprops[1], 4, (0.0, 1.0, 0.0)) *\
+                        mu.Matrix.Scale(sprops[2], 4, (0.0, 0.0, 1.0)) * self._current_scope.state.transform
+
 
     def __call__(self):
         return self._rwx_clump_stack[0]
@@ -360,12 +379,12 @@ def add_attr_recursive(clump, name):
     return attr
 
 
-def add_vertices_recursive(clump, transform = np.identity(4)):
+def add_vertices_recursive(clump, transform = mu.Matrix.Identity(4)):
 
     vertices = []
     transform = transform * clump.state.transform
     for v in clump.verts:
-        vert = transform * np.matrix([v[0], v[1], v[2], 1]).reshape((4,1))
+        vert = transform * mu.Vector([v[0], v[1], v[2], 1])
         vertices.append((vert[0], vert[1], vert[2]))
 
     for c in clump.clumps:
@@ -463,7 +482,8 @@ class Rwx2BlenderOperator(bpy.types.Operator):
             parser = RwxParser(filepath)
             rwx_object = parser()
         except Exception as exc:
-            self.report({'ERROR'}, "Could not parse input file (likely not a proper .rwx).")
+            print_exc(exc)
+            self.report({'ERROR'}, "Could not parse input file (either not a proper .rwx or a bug on my part).")
             return {'CANCELLED'}
 
         if len(rwx_object.clumps) == 0:
