@@ -5,6 +5,7 @@ import fileinput
 import numpy as np
 from copy import copy, deepcopy
 from math import radians
+import mathutils
 import bpy
 from bpy.props import *
 import bmesh
@@ -14,7 +15,7 @@ bl_info = {"name": "rwx2blender",
            "description": "Module to import Active Worlds RenderWare files (.rwx)",
            "version": (0, 1, 0),
            "blender": (2, 78, 0),
-           "location": "File > Export...",
+           "location": "File > Import...",
            "category": "Import-Export"}
 
 class RwxState:
@@ -243,10 +244,6 @@ class RwxParser:
     _transform_regex = re.compile("^ *(transform)(( +[-+]?[0-9]*\\.?[0-9]+){16}).*$", re.IGNORECASE)
     _scale_regex = re.compile("^ *(scale)( +([0-9]+)){3}.*$", re.IGNORECASE)
     _rotate_regex = re.compile("^ *(rotate)( +[-+]?[0-9]*\\.?[0-9]+){4}.*$", re.IGNORECASE)
-
-    
-    def _instanciate_proto(self, name):
-        pass
         
     
     def __init__(self, uri):
@@ -342,6 +339,11 @@ class RwxParser:
                 if res:
                     tprops = [ float(x) for x in self._float_regex.findall(res.group(2)) ]
                     if len(tprops) == 16: self._current_scope.state.transform = np.matrix(tprops).reshape((4,4)).T
+
+                res = self._scale_regex.match(line)
+                if res:
+                    sprops = [ float(x) for x in self._float_regex.findall(res.group(2)) ]
+                    if len(sprops) == 16: self._current_scope.state.transform *= np.matrix(tprops).reshape((4,4)).T
 
     def __call__(self):
         return self._rwx_clump_stack[0]
