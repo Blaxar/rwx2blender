@@ -23,9 +23,9 @@ from enum import Enum
 
 bl_info = {"name": "rwx2blender",
            "author": "Julien Bardagi (Blaxar Waldarax)",
-           "description": "Module to import Active Worlds RenderWare files (.rwx)",
+           "description": "Add-on to import Active Worlds RenderWare scripts (.rwx)",
            "version": (0, 2, 0),
-           "blender": (2, 78, 0),
+           "blender": (2, 79, 0),
            "location": "File > Import...",
            "category": "Import-Export"}
 
@@ -497,7 +497,7 @@ def make_materials_recursive(ob, clump, folder, extension = "jpg"):
             # create material
             mat = bpy.data.materials.new(name=mat_sign)
             
-            if shape.state.texture:
+            if shape.state.texture and folder is not None:
                 tex = bpy.data.textures.new(shape.state.texture, type = 'IMAGE')
                 tex.image = bpy.data.images.load(os.path.join(folder, "%s.%s" % (shape.state.texture, extension)))
                 mtex = mat.texture_slots.add()
@@ -511,6 +511,11 @@ def make_materials_recursive(ob, clump, folder, extension = "jpg"):
 
             mat.alpha = shape.state.opacity
             mat.diffuse_color = shape.state.color
+            mat.specular_color = (1.0, 1.0, 1.0)
+            mat.ambient = shape.state.surface[0]
+            mat.diffuse_intensity = shape.state.surface[1]
+            mat.specular_intensity = shape.state.surface[2]
+            mat.alpha = shape.state.opacity
 
             ob.data.materials.append(mat)
 
@@ -558,9 +563,13 @@ if in_blender:
                 if os.path.isdir(texturepath):
                     self.report({'WARNING'}, "No texture directory specified, assuming %s" % texturepath)
                 else:
-                    self.report({'ERROR'}, "No texture directory specified and could not guess any.")
-                    return {'CANCELLED'}
+                    self.report({'WARNING'}, "No texture directory specified and could not guess any, no texture will be used.")
+                    texturepath = None
 
+            elif not os.path.isdir(texturepath):
+                self.report({'WARNING'}, "Texture directory specified is not a directory, no texture will be used.")
+                texturepath = None
+                
             try:
                 parser = RwxParser(filepath)
                 rwx_object = parser()
@@ -624,7 +633,7 @@ if in_blender:
             return {'FINISHED'}
 
 def import_menu_func_rwx(self, context):
-    op = self.layout.operator(Rwx2BlenderOperator.bl_idname, text="Active Worlds RenderWare file (.rwx)")
+    op = self.layout.operator(Rwx2BlenderOperator.bl_idname, text="Active Worlds RenderWare script (.rwx)")
 
 def register():
     bpy.utils.register_class(Rwx2BlenderOperator)
