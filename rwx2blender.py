@@ -24,7 +24,7 @@ from enum import Enum
 bl_info = {"name": "rwx2blender",
            "author": "Julien Bardagi (Blaxar Waldarax)",
            "description": "Add-on to import Active Worlds RenderWare scripts (.rwx)",
-           "version": (0, 2, 0),
+           "version": (0, 2, 1),
            "blender": (2, 79, 0),
            "location": "File > Import...",
            "category": "Import-Export"}
@@ -296,10 +296,13 @@ class RwxParser:
     _scale_regex = re.compile("^ *(scale)(( +[-+]?[0-9]*\\.?[0-9]+){3}).*$", re.IGNORECASE)
     _rotate_regex = re.compile("^ *(rotate)(( +[-+]?[0-9]*){4})$", re.IGNORECASE)
     _surface_regex = re.compile("^ *(surface)(( +[-+]?[0-9]*\\.?[0-9]+){3}).*$", re.IGNORECASE)
+    _ambient_regex = re.compile("^ *(ambient)( +[-+]?[0-9]*\\.?[0-9]+).*$", re.IGNORECASE)
+    _diffuse_regex = re.compile("^ *(diffuse)( +[-+]?[0-9]*\\.?[0-9]+).*$", re.IGNORECASE)
+    _specular_regex = re.compile("^ *(specular)( +[-+]?[0-9]*\\.?[0-9]+).*$", re.IGNORECASE)
 
     # End regex list
 
-    def __init__(self, uri):
+    def __init__(self, uri, default_surface=(0.0, 0.0, 0.0)):
         
         self._rwx_clump_stack = []
         self._rwx_proto_dict = {}
@@ -318,6 +321,7 @@ class RwxParser:
                 if res:
                     self._rwx_clump_stack.append(RwxObject())
                     self._current_scope = self._rwx_clump_stack[-1]
+                    self._current_scope.state.surface = default_surface
                     continue
                 
                 res = self._clumpbegin_regex.match(line)
@@ -438,6 +442,24 @@ class RwxParser:
                         self._current_scope.state.surface = tuple(sprops)
                     continue
 
+                res = self._ambient_regex.match(line)
+                if res:
+                    surf = self._current_scope.state.surface
+                    self._current_scope.state.surface = (float(res.group(2)), surf[1], surf[2])
+                    continue
+
+                res = self._diffuse_regex.match(line)
+                if res:
+                    surf = self._current_scope.state.surface
+                    self._current_scope.state.surface = (surf[0], float(res.group(2)), surf[2])
+                    continue
+
+                res = self._specular_regex.match(line)
+                if res:
+                    surf = self._current_scope.state.surface
+                    self._current_scope.state.surface = (surf[0], surf[1], float(res.group(2)))
+                    continue
+
 
     def __call__(self):
         return self._rwx_clump_stack[0]
@@ -547,6 +569,33 @@ if in_blender:
             default="",
             subtype='DIR_PATH')
 
+        default_ambient= FloatProperty(
+            name="Default Ambient",
+            description="Default ambient light intensity for materials",
+            default=0.0,
+            min=0.0,
+            max=1.0,
+            step=0.1,
+            precision=3)
+
+        default_diffuse= FloatProperty(
+            name="Default Diffuse",
+            description="Default diffuse light intensity for materials",
+            default=0.0,
+            min=0.0,
+            max=1.0,
+            step=0.1,
+            precision=3)
+
+        default_specular= FloatProperty(
+            name="Default Specular",
+            description="Default specular light intensity for materials",
+            default=0.0,
+            min=0.0,
+            max=1.0,
+            step=0.1,
+            precision=3)
+
         def invoke(self, context, event):
             wm = bpy.context.window_manager
             wm.fileselect_add(self)
@@ -571,7 +620,9 @@ if in_blender:
                 texturepath = None
                 
             try:
-                parser = RwxParser(filepath)
+                parser = RwxParser(filepath, default_surface=(self.default_ambient,\
+                                                              self.default_diffuse,\
+                                                              self.default_specular))
                 rwx_object = parser()
             except Exception as exc:
                 print_exc(exc)
