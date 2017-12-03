@@ -13,14 +13,14 @@ This geometry consists of vertices, polygons, and material information.
 
 ### Installing
 
-First of all, clone this project (duh), in a terminal type:
+First of all: clone this project, open a terminal and type:
 ```
 git clone https://github.com/Blaxar/rwx2blender.git
 ```
 
-To import the add-on in Blender: go to *File* > *User Preferences...* then clic the *Add-ons* tab and clic *Install add-on frome file...*, select *rwx2blender.py* from the freshly cloned repository and import it.
+Next, to import the add-on in Blender: go to *File* > *User Preferences...* then clic the *Add-ons* tab and clic *Install add-on frome file...*, select *rwx2blender.py* from the freshly cloned repository and import it.
 
-To enable the plugin once it's imported, check the box in its entry in the *Add-ons* tab, if you have trouble finding it, select the *User* category to filter the list.
+Finally, to enable the plugin once it's imported, check the box in its entry in the *Add-ons* tab, if you have trouble finding it, select the *User* category to filter the list.
 
 ### Usage
 
