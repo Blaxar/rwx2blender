@@ -290,11 +290,14 @@ class RwxParser:
     _quad_regex = re.compile("^ *(quad|quadext)(( +([0-9]+)){4}).*$", re.IGNORECASE)
     _triangle_regex = re.compile("^ *(triangle|triangleext)(( +([0-9]+)){3}).*$", re.IGNORECASE)
     _texture_regex = re.compile("^ *(texture) +([A-Za-z0-9_\\-]+).*$", re.IGNORECASE)
-    _color_regex = re.compile("^ *(color)( +[-+]?[0-9]*\\.?[0-9]+){3}.*$", re.IGNORECASE)
+    _color_regex = re.compile("^ *(color)(( +[-+]?[0-9]*\\.?[0-9]+){3}).*$", re.IGNORECASE)
+    _opacity_regex = re.compile("^ *(opacity)( +[-+]?[0-9]*\\.?[0-9]+).*$", re.IGNORECASE)
     _transform_regex = re.compile("^ *(transform)(( +[-+]?[0-9]*\\.?[0-9]+){16}).*$", re.IGNORECASE)
     _scale_regex = re.compile("^ *(scale)(( +[-+]?[0-9]*\\.?[0-9]+){3}).*$", re.IGNORECASE)
     _rotate_regex = re.compile("^ *(rotate)(( +[-+]?[0-9]*){4})$", re.IGNORECASE)
+    _surface_regex = re.compile("^ *(surface)(( +[-+]?[0-9]*\\.?[0-9]+){3}).*$", re.IGNORECASE)
 
+    # End regex list
 
     def __init__(self, uri):
         
@@ -385,10 +388,23 @@ class RwxParser:
                     else: self._current_scope.vertices.append(RwxVertex(vprops[0], vprops[1], vprops[2]))
                     continue
 
+                res = self._color_regex.match(line)
+                if res:
+                    cprops = [ float(x) for x in self._float_regex.findall(res.group(2)) ]
+                    if len(cprops) == 3:
+                        self._current_scope.state.color = tuple(cprops)
+                    continue
+
+                res = self._opacity_regex.match(line)
+                if res:
+                    self._current_scope.state.opacity = float(res.group(2))
+                    continue
+
                 res = self._transform_regex.match(line)
                 if res:
                     tprops = [ float(x) for x in self._float_regex.findall(res.group(2)) ]
                     if len(tprops) == 16: self._current_scope.state.transform = mu.Matrix(list(zip(*[iter(tprops)]*4))).transposed()
+                    continue
 
                 res = self._rotate_regex.match(line)
                 if res:
@@ -403,6 +419,7 @@ class RwxParser:
                         if rprops[2]:
                             self._current_scope.state.transform =\
                             mu.Matrix.Rotation(radians(-rprops[3]), 4, 'Z') * self._current_scope.state.transform
+                    continue
                     
                 res = self._scale_regex.match(line)
                 if res:
@@ -412,6 +429,14 @@ class RwxParser:
                         mu.Matrix.Scale(sprops[0], 4, (1.0, 0.0, 0.0)) *\
                         mu.Matrix.Scale(sprops[1], 4, (0.0, 1.0, 0.0)) *\
                         mu.Matrix.Scale(sprops[2], 4, (0.0, 0.0, 1.0)) * self._current_scope.state.transform
+                    continue
+
+                res = self._surface_regex.match(line)
+                if res:
+                    sprops = [ float(x) for x in self._float_regex.findall(res.group(2)) ]
+                    if len(sprops) == 3:
+                        self._current_scope.state.surface = tuple(sprops)
+                    continue
 
 
     def __call__(self):
