@@ -24,7 +24,7 @@ from enum import Enum
 bl_info = {"name": "rwx2blender",
            "author": "Julien Bardagi (Blaxar Waldarax)",
            "description": "Module to import Active Worlds RenderWare files (.rwx)",
-           "version": (0, 1, 0),
+           "version": (0, 2, 0),
            "blender": (2, 78, 0),
            "location": "File > Import...",
            "category": "Import-Export"}
