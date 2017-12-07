@@ -13,6 +13,7 @@ try:
     import bpy
     from bpy.props import *
     import bmesh
+    from bmesh.ops import triangle_fill
 except ModuleNotFoundError as mnf:
     in_blender = False
 else:
@@ -64,7 +65,7 @@ class RwxState:
         # End of material related properties
         
         self.transform = mu.Matrix.Identity(4)
-    
+        
     @property
     def mat_signature(self):
 
@@ -77,10 +78,17 @@ class RwxState:
         sign.append(self.geometrysampling.name)
         sign.extend([x.name for x in sorted(self.texturemodes)])
         sign.append(self.materialmode.name)
-
+        
         h.update("".join([str(x) for x in sign]).replace(".","").lower().encode("utf-8"))
         return "_".join([str(self.texture), h.hexdigest()])
 
+    def __str__(self):
+        return self.mat_signature()
+
+    def __repr__(self):
+        return "<RwxState: %s>" % self.mat_signature
+        
+    
 
 class RwxVertex:
 
@@ -122,9 +130,19 @@ class RwxScope:
     def faces(self):
 
         faces = []
-        for shape in self.shapes: faces.extend(shape())
+        for shape in self.shapes:
+            if not isinstance(shape, RwxPolygon): faces.extend(shape())
 
         return faces
+
+    @property
+    def polys(self):
+
+        polys = []
+        for shape in self.shapes:
+            if isinstance(shape, RwxPolygon): polys.append(shape())
+
+        return polys
 
     @property
     def verts(self):
@@ -138,9 +156,17 @@ class RwxScope:
     def faces_uv(self):
 
         faces = self.faces
-        verts = self.verts
         verts_uv = self.verts_uv
+
         return [ [verts_uv[face[0]], verts_uv[face[1]], verts_uv[face[2]]] for face in faces ]
+
+    @property
+    def polys_uv(self):
+
+        polys = self.polys
+        verts_uv = self.verts_uv
+
+        return [ [ verts_uv[edge[0]] for edge in enumerate(poly) ] for poly in polys ]
 
     @property
     def faces_state(self):
@@ -149,7 +175,17 @@ class RwxScope:
         
         for shape in self.shapes:
             for face in shape():
-                states.append(shape.state)
+                if not isinstance(shape, RwxPolygon): states.append(shape.state)
+
+        return states
+
+    @property
+    def polys_state(self):
+        
+        states = []
+        
+        for shape in self.shapes:
+                if isinstance(shape, RwxPolygon): states.append(shape.state)
 
         return states
 
@@ -242,12 +278,16 @@ class RwxPolygon(RwxShape):
 
     def __call__(self):
 
-        vertices = []
+        edges = []
 
-        for id in range(0, len(self.vertices_id)-2):
-            vertices.append((self.vertices_id[0]-1, self.vertices_id[id+1]-1, self.vertices_id[id+2]-1))
-            
-        return vertices
+        for id in range(0, len(self.vertices_id)-1):
+            if self.vertices_id[id] != self.vertices_id[id+1]:
+                edges.append((self.vertices_id[id]-1, self.vertices_id[id+1]-1))
+
+        if self.vertices_id[-1] != self.vertices_id[0]:
+            edges.append((self.vertices_id[-1]-1, self.vertices_id[0]-1))
+        
+        return edges
 
 
 class RwxObject:
@@ -276,7 +316,7 @@ class RwxParser:
     # Begin regex list
 
     _integer_regex = re.compile("([-+]?[0-9]+)")
-    _float_regex = re.compile("([-+]?[0-9]*\\.?[0-9]+)")
+    _float_regex = re.compile("([+-]?([0-9]+([.][0-9]*)?|[.][0-9]+))")
     _non_comment_regex = re.compile("^(.*)#")
     _modelbegin_regex = re.compile("^ *(modelbegin).*$", re.IGNORECASE)
     _modelend_regex = re.compile("^ *(modelend).*$", re.IGNORECASE)
@@ -285,20 +325,20 @@ class RwxParser:
     _protobegin_regex = re.compile("^ *(protobegin) +([A-Za-z0-9_\\-]+).*$", re.IGNORECASE)
     _protoinstance_regex = re.compile("^ *(protoinstance) +([A-Za-z0-9_\\-]+).*$", re.IGNORECASE)
     _protoend_regex = re.compile("^ *(protoend).*$", re.IGNORECASE)
-    _vertex_regex = re.compile("^ *(vertex|vertexext)(( +[-+]?[0-9]*\\.?[0-9]+){3}) *(uv(( +[-+]?[0-9]*\\.?[0-9]+){2}))?.*$", re.IGNORECASE)
+    _vertex_regex = re.compile("^ *(vertex|vertexext)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}) *(uv(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){2}))?.*$", re.IGNORECASE)
     _polygon_regex = re.compile("^ *(polygon|polygonext)( +[0-9]+)(( +[0-9]+)+) ?.*$", re.IGNORECASE)
     _quad_regex = re.compile("^ *(quad|quadext)(( +([0-9]+)){4}).*$", re.IGNORECASE)
     _triangle_regex = re.compile("^ *(triangle|triangleext)(( +([0-9]+)){3}).*$", re.IGNORECASE)
     _texture_regex = re.compile("^ *(texture) +([A-Za-z0-9_\\-]+).*$", re.IGNORECASE)
-    _color_regex = re.compile("^ *(color)(( +[-+]?[0-9]*\\.?[0-9]+){3}).*$", re.IGNORECASE)
-    _opacity_regex = re.compile("^ *(opacity)( +[-+]?[0-9]*\\.?[0-9]+).*$", re.IGNORECASE)
-    _transform_regex = re.compile("^ *(transform)(( +[-+]?[0-9]*\\.?[0-9]+){16}).*$", re.IGNORECASE)
-    _scale_regex = re.compile("^ *(scale)(( +[-+]?[0-9]*\\.?[0-9]+){3}).*$", re.IGNORECASE)
+    _color_regex = re.compile("^ *(color)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}).*$", re.IGNORECASE)
+    _opacity_regex = re.compile("^ *(opacity)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", re.IGNORECASE)
+    _transform_regex = re.compile("^ *(transform)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){16}).*$", re.IGNORECASE)
+    _scale_regex = re.compile("^ *(scale)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}).*$", re.IGNORECASE)
     _rotate_regex = re.compile("^ *(rotate)(( +[-+]?[0-9]*){4})$", re.IGNORECASE)
-    _surface_regex = re.compile("^ *(surface)(( +[-+]?[0-9]*\\.?[0-9]+){3}).*$", re.IGNORECASE)
-    _ambient_regex = re.compile("^ *(ambient)( +[-+]?[0-9]*\\.?[0-9]+).*$", re.IGNORECASE)
-    _diffuse_regex = re.compile("^ *(diffuse)( +[-+]?[0-9]*\\.?[0-9]+).*$", re.IGNORECASE)
-    _specular_regex = re.compile("^ *(specular)( +[-+]?[0-9]*\\.?[0-9]+).*$", re.IGNORECASE)
+    _surface_regex = re.compile("^ *(surface)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}).*$", re.IGNORECASE)
+    _ambient_regex = re.compile("^ *(ambient)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", re.IGNORECASE)
+    _diffuse_regex = re.compile("^ *(diffuse)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", re.IGNORECASE)
+    _specular_regex = re.compile("^ *(specular)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", re.IGNORECASE)
 
     # End regex list
 
@@ -311,10 +351,13 @@ class RwxParser:
         with fileinput.input(files=(uri,)) as f:
             res = None
             for line in f:
+
+                old_line = ""
  
                 #strip comment away
                 res = self._non_comment_regex.match(line)
                 if res:
+                    old_line = line
                     line = res.group(1)
                 
                 res = self._modelbegin_regex.match(line)
@@ -385,16 +428,16 @@ class RwxParser:
                 
                 res = self._vertex_regex.match(line)
                 if res:
-                    vprops = [ float(x) for x in self._float_regex.findall(res.group(2)) ]
-                    if res.group(5):
-                        vprops.extend([ float(x) for x in self._float_regex.findall(res.group(5)) ])
+                    vprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
+                    if res.group(7):
+                        vprops.extend([ float(x[0]) for x in self._float_regex.findall(res.group(7)) ])
                         self._current_scope.vertices.append(RwxVertex(vprops[0], vprops[1], vprops[2], u = vprops[3], v = vprops[4]))
                     else: self._current_scope.vertices.append(RwxVertex(vprops[0], vprops[1], vprops[2]))
                     continue
 
                 res = self._color_regex.match(line)
                 if res:
-                    cprops = [ float(x) for x in self._float_regex.findall(res.group(2)) ]
+                    cprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
                     if len(cprops) == 3:
                         self._current_scope.state.color = tuple(cprops)
                     continue
@@ -406,7 +449,7 @@ class RwxParser:
 
                 res = self._transform_regex.match(line)
                 if res:
-                    tprops = [ float(x) for x in self._float_regex.findall(res.group(2)) ]
+                    tprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
                     if len(tprops) == 16: self._current_scope.state.transform = mu.Matrix(list(zip(*[iter(tprops)]*4))).transposed()
                     continue
 
@@ -427,7 +470,7 @@ class RwxParser:
                     
                 res = self._scale_regex.match(line)
                 if res:
-                    sprops = [ float(x) for x in self._float_regex.findall(res.group(2)) ]
+                    sprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
                     if len(sprops) == 3:
                         self._current_scope.state.transform =\
                         mu.Matrix.Scale(sprops[0], 4, (1.0, 0.0, 0.0)) *\
@@ -437,7 +480,7 @@ class RwxParser:
 
                 res = self._surface_regex.match(line)
                 if res:
-                    sprops = [ float(x) for x in self._float_regex.findall(res.group(2)) ]
+                    sprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
                     if len(sprops) == 3:
                         self._current_scope.state.surface = tuple(sprops)
                     continue
@@ -493,17 +536,24 @@ def add_vertices_recursive(clump, transform = mu.Matrix.Identity(4)):
 def add_faces_recursive(clump, offset=0):
 
     faces = []
+    polys = []
     tmp_faces = clump.faces
+    tmp_polys = clump.polys
+    
     for tmp_face in tmp_faces:
         faces.append((tmp_face[0]+offset, tmp_face[1]+offset, tmp_face[2]+offset))
+        
+    for tmp_poly in tmp_polys:
+        polys.append([(edge[0]+offset, edge[1]+offset) for edge in tmp_poly])
     
     offset += len(clump.verts)
     
     for c in clump.clumps:
-        tmp_faces, offset = add_faces_recursive(c, offset)
+        tmp_faces, tmp_polys, offset = add_faces_recursive(c, offset)
         faces.extend(tmp_faces)
+        polys.extend(tmp_polys)
 
-    return faces, offset
+    return faces, polys, offset
 
 
 def make_materials_recursive(ob, clump, folder, extension = "jpg"):
@@ -634,35 +684,65 @@ if in_blender:
                 return {'CANCELLED'}
 
             verts = add_vertices_recursive(rwx_object.clumps[0])
-            edges = []
-            faces, offset = add_faces_recursive(rwx_object.clumps[0])
+            faces, polys, offset = add_faces_recursive(rwx_object.clumps[0])
             faces_state = add_attr_recursive(rwx_object.clumps[0], "faces_state")
+            polys_state = add_attr_recursive(rwx_object.clumps[0], "polys_state")
             faces_uv = add_attr_recursive(rwx_object.clumps[0], "faces_uv")
+            verts_uv = add_attr_recursive(rwx_object.clumps[0], "verts_uv")
             
             mesh = bpy.data.meshes.new('Mesh')
             ob = bpy.data.objects.new('Object', mesh)
-        
+
             make_materials_recursive(ob, rwx_object.clumps[0], texturepath)
 
             # Create mesh from given verts, edges, faces. Either edges or
             # faces should be [], or you ask for problems
-            mesh.from_pydata(verts, edges, faces)
+            mesh.from_pydata(verts, [], faces)
             bm = bmesh.new()
             bm.from_mesh(mesh)
 
             uv_layer = bm.loops.layers.uv.verify()
             bm.faces.layers.tex.verify()  # currently blender needs both layers.
-
+                
             if uv_layer is None:
                 uv_layer = bm.loops.layers.uv.new()
-            
-            # adjust UVs
+
+            # Adjust materials and UVs for faces
             for i, f in enumerate(bm.faces):
                 f.material_index = ob.data.materials.keys().index(faces_state[i].mat_signature)
                 for j, l in enumerate(f.loops):
                     uv = faces_uv[i][j]
                     if uv[0] is not None and uv[1] is not None:
                         l[uv_layer].uv = uv
+
+            bm.verts.ensure_lookup_table()
+
+            # Now we need to fill polygon with triangles (make faces)
+            for i, poly in enumerate(polys):
+                bm_edges = []
+                
+                for edge in poly: 
+                    vert_seq = (bm.verts[edge[0]], bm.verts[edge[1]])
+                    bm_edge = bm.edges.get(vert_seq)
+                    
+                    if bm_edge is None: # We create the edge if it does not exist
+                        bm_edge = bm.edges.new(vert_seq)
+                        bm.edges.ensure_lookup_table()
+                        
+                    if bm_edge not in bm_edges: bm_edges.append(bm_edge)
+                
+                geom = triangle_fill(bm, use_beauty=True, use_dissolve=False, edges=bm_edges)["geom"]     
+
+                # adjust materials and UVs for polygons
+                for f in geom:
+                    if isinstance(f, bmesh.types.BMFace):
+                        f.material_index = ob.data.materials.keys().index(polys_state[i].mat_signature)
+                        for l in f.loops:
+                            uv = verts_uv[l.vert.index]
+                            if uv[0] is not None and uv[1] is not None:
+                                l[uv_layer].uv = uv
+
+            bm.faces.ensure_lookup_table()
                     
             bm.to_mesh(mesh)
             bm.free()
