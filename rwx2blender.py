@@ -5,7 +5,7 @@ import fileinput
 from copy import copy
 from math import radians
 import mathutils as mu
-from hashlib import blake2b
+from hashlib import md5
 
 in_blender = None
 
@@ -69,7 +69,7 @@ class RwxState:
     @property
     def mat_signature(self):
 
-        h = blake2b(digest_size=5)
+        h = md5()
 
         sign = [("%.3f" % x) for x in self.color]
         sign.extend([("%.3f" % x) for x in self.surface])
@@ -80,7 +80,7 @@ class RwxState:
         sign.append(self.materialmode.name)
         
         h.update("".join([str(x) for x in sign]).replace(".","").lower().encode("utf-8"))
-        return "_".join([str(self.texture), h.hexdigest()])
+        return "_".join([str(self.texture), h.hexdigest()[:10]])
 
     def __str__(self):
         return self.mat_signature()
@@ -279,13 +279,14 @@ class RwxPolygon(RwxShape):
     def __call__(self):
 
         edges = []
+        vertices_id = list(reversed(self.vertices_id))
 
-        for id in range(0, len(self.vertices_id)-1):
-            if self.vertices_id[id] != self.vertices_id[id+1]:
-                edges.append((self.vertices_id[id]-1, self.vertices_id[id+1]-1))
+        for id in range(0, len(vertices_id)-1):
+            if vertices_id[id] != vertices_id[id+1]:
+                edges.append((vertices_id[id]-1, vertices_id[id+1]-1))
 
-        if self.vertices_id[-1] != self.vertices_id[0]:
-            edges.append((self.vertices_id[-1]-1, self.vertices_id[0]-1))
+        if vertices_id[-1] != vertices_id[0]:
+            edges.append((vertices_id[-1]-1, vertices_id[0]-1))
         
         return edges
 
