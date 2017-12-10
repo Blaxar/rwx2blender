@@ -13,7 +13,7 @@ try:
     import bpy
     from bpy.props import *
     import bmesh
-    from bmesh.ops import triangle_fill
+    from bmesh.ops import edgeloop_fill
 except ModuleNotFoundError as mnf:
     in_blender = False
 else:
@@ -279,7 +279,7 @@ class RwxPolygon(RwxShape):
     def __call__(self):
 
         edges = []
-        vertices_id = list(reversed(self.vertices_id))
+        vertices_id = self.vertices_id
 
         for id in range(0, len(vertices_id)-1):
             if vertices_id[id] != vertices_id[id+1]:
@@ -719,22 +719,32 @@ if in_blender:
             bm.verts.ensure_lookup_table()
 
             # Now we need to fill polygon with triangles (make faces)
+            
             for i, poly in enumerate(polys):
                 bm_edges = []
+
+                first_vert = bm.verts.new((verts[poly[0][0]][0], verts[poly[0][0]][1], verts[poly[0][0]][2]))
+                prev_vert = first_vert
+                verts_uv.append((verts_uv[poly[0][0]][0], verts_uv[poly[0][0]][1]))
+                bm.verts.ensure_lookup_table()
                 
-                for edge in poly: 
-                    vert_seq = (bm.verts[edge[0]], bm.verts[edge[1]])
-                    bm_edge = bm.edges.get(vert_seq)
-                    
-                    if bm_edge is None: # We create the edge if it does not exist
-                        bm_edge = bm.edges.new(vert_seq)
-                        bm.edges.ensure_lookup_table()
-                        
-                    if bm_edge not in bm_edges: bm_edges.append(bm_edge)
+                for edge in poly[:-1]:
+                    new_vert = bm.verts.new((verts[edge[1]][0], verts[edge[1]][1], verts[edge[1]][2]))
+                    verts_uv.append((verts_uv[edge[1]][0], verts_uv[edge[1]][1]))
+                    bm_edge = bm.edges.new((prev_vert, new_vert))
+                    bm.verts.ensure_lookup_table()
+                    prev_vert = new_vert
+                    bm.edges.ensure_lookup_table()
+                    bm_edges.append(bm_edge)
+
+                bm_edge = bm.edges.new((prev_vert, first_vert))
+                bm.edges.ensure_lookup_table()
+                bm_edges.append(bm_edge)
                 
-                geom = triangle_fill(bm, use_beauty=True, use_dissolve=False, edges=bm_edges)["geom"]     
+                geom = edgeloop_fill(bm, edges=bm_edges)["faces"]
 
                 # adjust materials and UVs for polygons
+                
                 for f in geom:
                     if isinstance(f, bmesh.types.BMFace):
                         f.material_index = ob.data.materials.keys().index(polys_state[i].mat_signature)
