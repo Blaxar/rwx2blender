@@ -13,7 +13,7 @@ try:
     import bpy
     from bpy.props import *
     import bmesh
-    from bmesh.ops import edgeloop_fill
+    from bmesh.ops import edgeloop_fill, triangulate, remove_doubles
 except ModuleNotFoundError as mnf:
     in_blender = False
 else:
@@ -722,13 +722,20 @@ if in_blender:
             
             for i, poly in enumerate(polys):
                 bm_edges = []
+                bm_verts = []
 
                 first_vert = bm.verts.new((verts[poly[0][0]][0], verts[poly[0][0]][1], verts[poly[0][0]][2]))
-                prev_vert = first_vert
-                verts_uv.append((verts_uv[poly[0][0]][0], verts_uv[poly[0][0]][1]))
                 bm.verts.ensure_lookup_table()
-                
+                prev_vert = first_vert
+                bm_verts.append(first_vert)
+                bm_verts.append(bm.verts[poly[0][0]])
+                verts_uv.append((verts_uv[poly[0][0]][0], verts_uv[poly[0][0]][1]))
+               
                 for edge in poly[:-1]:
+
+                    if bm.verts[edge[1]] not in bm_verts:
+                        bm_verts.append(bm.verts[edge[1]])
+                    
                     new_vert = bm.verts.new((verts[edge[1]][0], verts[edge[1]][1], verts[edge[1]][2]))
                     verts_uv.append((verts_uv[edge[1]][0], verts_uv[edge[1]][1]))
                     bm_edge = bm.edges.new((prev_vert, new_vert))
@@ -736,6 +743,7 @@ if in_blender:
                     prev_vert = new_vert
                     bm.edges.ensure_lookup_table()
                     bm_edges.append(bm_edge)
+                    bm_verts.append(new_vert)
 
                 bm_edge = bm.edges.new((prev_vert, first_vert))
                 bm.edges.ensure_lookup_table()
@@ -746,14 +754,16 @@ if in_blender:
                 # adjust materials and UVs for polygons
                 
                 for f in geom:
-                    if isinstance(f, bmesh.types.BMFace):
-                        f.material_index = ob.data.materials.keys().index(polys_state[i].mat_signature)
-                        for l in f.loops:
-                            uv = verts_uv[l.vert.index]
-                            if uv[0] is not None and uv[1] is not None:
-                                l[uv_layer].uv = uv
+                    f.material_index = ob.data.materials.keys().index(polys_state[i].mat_signature)
+                    for l in f.loops:
+                        uv = verts_uv[l.vert.index]
+                        if uv[0] is not None and uv[1] is not None:
+                            l[uv_layer].uv = uv
+                                
+                triangulate(bm, faces=geom)
+                bm.faces.ensure_lookup_table()
+                remove_doubles(bm, verts=bm_verts, dist=0.0000001)
 
-            bm.faces.ensure_lookup_table()
                     
             bm.to_mesh(mesh)
             bm.free()
