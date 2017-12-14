@@ -13,7 +13,7 @@ try:
     import bpy
     from bpy.props import *
     import bmesh
-    from bmesh.ops import edgeloop_fill, triangulate, remove_doubles
+    from bmesh.ops import edgeloop_fill, triangulate, pointmerge
 except ModuleNotFoundError as mnf:
     in_blender = False
 else:
@@ -723,31 +723,41 @@ if in_blender:
             for i, poly in enumerate(polys):
                 bm_edges = []
                 bm_verts = []
+                bm_merge_verts = []
 
-                first_vert = bm.verts.new((verts[poly[0][0]][0], verts[poly[0][0]][1], verts[poly[0][0]][2]))
+                first_vert = bm.verts[poly[0][0]]
                 bm.verts.ensure_lookup_table()
                 prev_vert = first_vert
                 bm_verts.append(first_vert)
-                bm_verts.append(bm.verts[poly[0][0]])
                 verts_uv.append((verts_uv[poly[0][0]][0], verts_uv[poly[0][0]][1]))
                
                 for edge in poly[:-1]:
 
-                    if bm.verts[edge[1]] not in bm_verts:
-                        bm_verts.append(bm.verts[edge[1]])
+                    if bm.verts[edge[1]] in bm_verts:
+                        new_vert = bm.verts.new((verts[edge[1]][0], verts[edge[1]][1], verts[edge[1]][2]))
+                        bm.verts.ensure_lookup_table()
+                        bm_merge_verts.append((bm.verts[edge[1]], new_vert))
+                        verts_uv.append((verts_uv[edge[1]][0], verts_uv[edge[1]][1]))
+                    else:
+                        new_vert = bm.verts[edge[1]]
                     
-                    new_vert = bm.verts.new((verts[edge[1]][0], verts[edge[1]][1], verts[edge[1]][2]))
-                    verts_uv.append((verts_uv[edge[1]][0], verts_uv[edge[1]][1]))
-                    bm_edge = bm.edges.new((prev_vert, new_vert))
-                    bm.verts.ensure_lookup_table()
-                    prev_vert = new_vert
-                    bm.edges.ensure_lookup_table()
+                    bm_edge = bm.edges.get((prev_vert, new_vert))
+                    if not bm_edge:
+                        bm_edge = bm.edges.new((prev_vert, new_vert))
+
                     bm_edges.append(bm_edge)
+                        
+                    bm.edges.ensure_lookup_table()
+                    prev_vert = new_vert
                     bm_verts.append(new_vert)
 
-                bm_edge = bm.edges.new((prev_vert, first_vert))
-                bm.edges.ensure_lookup_table()
+                bm_edge = bm.edges.get((prev_vert, first_vert))
+                if not bm_edge:
+                    bm_edge = bm.edges.new((prev_vert, first_vert))
+
                 bm_edges.append(bm_edge)
+                
+                bm.edges.ensure_lookup_table()
                 
                 geom = edgeloop_fill(bm, edges=bm_edges)["faces"]
 
@@ -759,10 +769,15 @@ if in_blender:
                         uv = verts_uv[l.vert.index]
                         if uv[0] is not None and uv[1] is not None:
                             l[uv_layer].uv = uv
-                                
+                               
                 triangulate(bm, faces=geom)
                 bm.faces.ensure_lookup_table()
-                remove_doubles(bm, verts=bm_verts, dist=0.0000001)
+                
+                for merge_verts in bm_merge_verts:
+                    pointmerge(bm, verts=merge_verts, merge_co=merge_verts[0].co)
+
+                bm.verts.ensure_lookup_table()
+                bm.edges.ensure_lookup_table()
 
                     
             bm.to_mesh(mesh)
