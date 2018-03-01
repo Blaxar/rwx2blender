@@ -18,7 +18,7 @@ First of all: clone this project, open a terminal and type:
 git clone https://github.com/Blaxar/rwx2blender.git
 ```
 
-Next, to import the add-on in Blender: go to *File* > *User Preferences...* then clic the *Add-ons* tab and clic *Install add-on frome file...*, select *rwx2blender.py* from the freshly cloned repository and import it.
+Next, to import the add-on in Blender: go to *File* > *User Preferences...* then click the *Add-ons* tab and click *Install add-on from file...*, select *rwx2blender.py* from the freshly cloned repository and import it.
 
 Finally, to enable the plugin once it's imported, check the box in its entry in the *Add-ons* tab, if you have trouble finding it, select the *User* category to filter the list.
 

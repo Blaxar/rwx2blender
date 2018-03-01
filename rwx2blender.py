@@ -1,3 +1,21 @@
+"""
+    rwx2blender - Blender add-on to import Active Worlds RenderWare scripts.
+    Copyright (C) 2017  Julien Bardagi (Blaxar Waldarax <blaxar.waldarax@gmail.com>)
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+"""
+
 import sys
 import os
 import re
@@ -6,6 +24,8 @@ from copy import copy
 from math import radians
 import mathutils as mu
 from hashlib import md5
+import zipfile
+import tempfile
 
 in_blender = None
 
@@ -18,6 +38,15 @@ except ModuleNotFoundError as mnf:
     in_blender = False
 else:
     in_blender = True
+
+try:
+    from PIL import Image
+except ModuleNotFoundError as mnf:
+    has_image = False
+else:
+    has_image = True
+        
+    
 
 from traceback import print_exc
 from enum import Enum
@@ -62,6 +91,7 @@ class RwxState:
         self.texturemodes = [TextureMode.LIT,] # There's possibly more than one mode enabled at a time (hence why we use an array)
         self.materialmode = MaterialMode.NONE # Neither NULL nor DOUBLE: we only render one side of the polygon
         self.texture = None
+        self.mask = None
         # End of material related properties
         
         self.transform = mu.Matrix.Identity(4)
@@ -80,7 +110,7 @@ class RwxState:
         sign.append(self.materialmode.name)
         
         h.update("".join([str(x) for x in sign]).replace(".","").lower().encode("utf-8"))
-        return "_".join([str(self.texture), h.hexdigest()[:10]])
+        return "_".join([str(self.texture), str(self.mask), h.hexdigest()[:10]])
 
     def __str__(self):
         return self.mat_signature()
@@ -330,7 +360,7 @@ class RwxParser:
     _polygon_regex = re.compile("^ *(polygon|polygonext)( +[0-9]+)(( +[0-9]+)+) ?.*$", re.IGNORECASE)
     _quad_regex = re.compile("^ *(quad|quadext)(( +([0-9]+)){4}).*$", re.IGNORECASE)
     _triangle_regex = re.compile("^ *(triangle|triangleext)(( +([0-9]+)){3}).*$", re.IGNORECASE)
-    _texture_regex = re.compile("^ *(texture) +([A-Za-z0-9_\\-]+).*$", re.IGNORECASE)
+    _texture_regex = re.compile("^ *(texture) +([A-Za-z0-9_\\-]+) *(mask *([A-Za-z0-9_\\-]+))?.*$", re.IGNORECASE)
     _color_regex = re.compile("^ *(color)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}).*$", re.IGNORECASE)
     _opacity_regex = re.compile("^ *(opacity)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", re.IGNORECASE)
     _transform_regex = re.compile("^ *(transform)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){16}).*$", re.IGNORECASE)
@@ -403,6 +433,7 @@ class RwxParser:
                 res = self._texture_regex.match(line)
                 if res:
                     self._current_scope.state.texture = None if res.group(2).lower() == "null" else res.group(2)
+                    self._current_scope.state.mask = res.group(4)
                     continue
                     
                 res = self._triangle_regex.match(line)
@@ -543,7 +574,7 @@ def add_faces_recursive(clump, offset=0):
     
     for tmp_face in tmp_faces:
         faces.append((tmp_face[0]+offset, tmp_face[1]+offset, tmp_face[2]+offset))
-        
+    
     for tmp_poly in tmp_polys:
         polys.append([(edge[0]+offset, edge[1]+offset) for edge in tmp_poly])
     
@@ -557,7 +588,7 @@ def add_faces_recursive(clump, offset=0):
     return faces, polys, offset
 
 
-def make_materials_recursive(ob, clump, folder, extension = "jpg"):
+def make_materials_recursive(ob, clump, folder, report, tex_extension = "jpg", mask_extension = "zip"):
 
     for shape in clump.shapes:
         # Get material
@@ -569,10 +600,40 @@ def make_materials_recursive(ob, clump, folder, extension = "jpg"):
         if mat is None:
             # create material
             mat = bpy.data.materials.new(name=mat_sign)
+            mat.use_transparency = False
+            mat.alpha = shape.state.opacity
             
             if shape.state.texture and folder is not None:
+                img_path = os.path.join(folder, "%s.%s" % (shape.state.texture, tex_extension))
+
+                if shape.state.mask is not None and has_image:
+                    try:
+                        zipf = zipfile.ZipFile(os.path.join(folder, "%s.%s" % (shape.state.mask, mask_extension)), "r")
+                    except Exception as e:
+                        report({'WARNING'}, str(e))
+                    else:
+                        name_list = zipf.namelist()
+                        bmp_dir = os.path.join(tempfile.gettempdir(), "rwx2blender")
+                        if len(name_list) == 1:
+                            os.makedirs(bmp_dir, exist_ok=True)
+                            zipf.extract(name_list[0], path = bmp_dir)
+                            bmp_path = os.path.join(bmp_dir, name_list[0])
+                            im = Image.open(bmp_path)
+                            a_chan = im.split()[0].convert("L")
+                            im.close()
+                            im = Image.open(img_path)
+                            rgb_chans = im.convert("RGB").split()
+                            rgba_chans = [rgb_chans[0], rgb_chans[1], rgb_chans[2], a_chan]
+                            im.close()
+                            img_path = os.path.join(bmp_dir, "%s.%s" % (shape.state.texture, "png"))
+                            im = Image.merge("RGBA", rgba_chans)
+                            im.save(img_path)
+                            im.close()
+                            mat.use_transparency = True
+                            mat.alpha = 0.0
+                    
                 tex = bpy.data.textures.new(shape.state.texture, type = 'IMAGE')
-                tex.image = bpy.data.images.load(os.path.join(folder, "%s.%s" % (shape.state.texture, extension)))
+                tex.image = bpy.data.images.load(img_path)
                 mtex = mat.texture_slots.add()
                 mtex.texture = tex
                 mtex.texture_coords = 'UV'
@@ -580,15 +641,13 @@ def make_materials_recursive(ob, clump, folder, extension = "jpg"):
                 mtex.use_map_color_emission = True 
                 mtex.emission_color_factor = 1.0
                 mtex.use_map_density = True
-                mtex.mapping = 'FLAT'
+                mtex.mapping = 'FLAT' 
 
-            mat.alpha = shape.state.opacity
             mat.diffuse_color = shape.state.color
             mat.specular_color = (1.0, 1.0, 1.0)
             mat.ambient = shape.state.surface[0]
             mat.diffuse_intensity = shape.state.surface[1]
             mat.specular_intensity = shape.state.surface[2]
-            mat.alpha = shape.state.opacity
 
             ob.data.materials.append(mat)
 
@@ -597,7 +656,7 @@ def make_materials_recursive(ob, clump, folder, extension = "jpg"):
                 ob.data.materials.append(mat)
         
     for sub_clump in clump.clumps:
-        make_materials_recursive(ob, sub_clump, folder, extension)
+        make_materials_recursive(ob, sub_clump, folder, report, tex_extension, mask_extension)
 
 if in_blender:
         
@@ -694,7 +753,7 @@ if in_blender:
             mesh = bpy.data.meshes.new('Mesh')
             ob = bpy.data.objects.new('Object', mesh)
 
-            make_materials_recursive(ob, rwx_object.clumps[0], texturepath)
+            make_materials_recursive(ob, rwx_object.clumps[0], texturepath, self.report)
 
             # Create mesh from given verts, edges, faces. Either edges or
             # faces should be [], or you ask for problems
@@ -718,8 +777,7 @@ if in_blender:
 
             bm.verts.ensure_lookup_table()
 
-            # Now we need to fill polygon with triangles (make faces)
-            
+            # Now we need to fill polygons with triangles (make faces)
             for i, poly in enumerate(polys):
                 bm_edges = []
                 bm_verts = []
