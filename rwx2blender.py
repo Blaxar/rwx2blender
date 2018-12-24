@@ -390,7 +390,10 @@ class RwxParser:
                 if res:
                     old_line = line
                     line = res.group(1)
-                
+
+                #replace tabs with spaces
+                line = line.replace("\t", " ")
+
                 res = self._modelbegin_regex.match(line)
                 if res:
                     self._rwx_clump_stack.append(RwxObject())
