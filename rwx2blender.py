@@ -54,7 +54,7 @@ from enum import Enum
 bl_info = {"name": "rwx2blender",
            "author": "Julien Bardagi (Blaxar Waldarax)",
            "description": "Add-on to import Active Worlds RenderWare scripts (.rwx)",
-           "version": (0, 2, 2),
+           "version": (0, 2, 3),
            "blender": (2, 79, 0),
            "location": "File > Import...",
            "category": "Import-Export"}
@@ -122,7 +122,7 @@ class RwxState:
 
 class RwxVertex:
 
-    def __init__(self, x, y ,z, u = None, v = None):
+    def __init__(self, x, y, z, u = None, v = None):
         
         self.x = x
         self.y = y
