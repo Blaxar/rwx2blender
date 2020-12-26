@@ -45,8 +45,8 @@ except ModuleNotFoundError as mnf:
     has_image = False
 else:
     has_image = True
-        
-    
+
+
 
 from traceback import print_exc
 from enum import Enum
@@ -93,9 +93,9 @@ class RwxState:
         self.texture = None
         self.mask = None
         # End of material related properties
-        
+
         self.transform = mu.Matrix.Identity(4)
-        
+
     @property
     def mat_signature(self):
 
@@ -108,7 +108,7 @@ class RwxState:
         sign.append(self.geometrysampling.name)
         sign.extend([x.name for x in sorted(self.texturemodes)])
         sign.append(self.materialmode.name)
-        
+
         h.update("".join([str(x) for x in sign]).replace(".","").lower().encode("utf-8"))
         return "_".join([str(self.texture), str(self.mask), h.hexdigest()[:10]])
 
@@ -117,13 +117,13 @@ class RwxState:
 
     def __repr__(self):
         return "<RwxState: %s>" % self.mat_signature
-        
-    
+
+
 
 class RwxVertex:
 
     def __init__(self, x, y, z, u = None, v = None):
-        
+
         self.x = x
         self.y = y
         self.z = z
@@ -139,10 +139,10 @@ class RwxVertex:
     @property
     def uv(self):
         return (self.u, self.v)
-        
+
 
 class RwxScope:
-    
+
     def __init__(self, state = RwxState()):
 
         self.state = copy(state)
@@ -150,7 +150,7 @@ class RwxScope:
         self.shapes = []
 
     def __str__(self):
-        
+
         return "vertices:%s" % os.linesep +\
                os.linesep.join([ "-- %s" % (str(v),) for v in self.vertices ]) +\
                "{0}shapes:{0}".format(os.linesep) +\
@@ -181,7 +181,7 @@ class RwxScope:
     @property
     def verts_uv(self):
         return [[vert.uv[0], 1.0-vert.uv[1] if vert.uv[1] is not None else None] for vert in self.vertices]
-    
+
     @property
     def faces_uv(self):
 
@@ -200,9 +200,9 @@ class RwxScope:
 
     @property
     def faces_state(self):
-        
+
         states = []
-        
+
         for shape in self.shapes:
             for face in shape():
                 if not isinstance(shape, RwxPolygon): states.append(shape.state)
@@ -211,19 +211,19 @@ class RwxScope:
 
     @property
     def polys_state(self):
-        
+
         states = []
-        
+
         for shape in self.shapes:
                 if isinstance(shape, RwxPolygon): states.append(shape.state)
 
         return states
 
-    
+
 class RwxClump(RwxScope):
 
     def __init__(self, **kwargs):
-        
+
         super().__init__(**kwargs)
         self.clumps = []
 
@@ -233,68 +233,60 @@ class RwxClump(RwxScope):
         clumps = []
         for clump in cl: clumps.extend(clump)
         clumps = ["----%s" % str(c) for c in clumps]
-        
+
         return "clump:%s" % os.linesep +\
                super().__str__()+os.linesep+\
                "--clumps:%s" % os.linesep +\
                os.linesep.join(clumps)
 
     def apply_proto(self, proto):
-        
+
         offset = len(self.vertices)
 
         shapes = copy(proto.shapes)
         for shape in shapes:
             for i, vid in enumerate(shape.vertices_id):
                 shape.vertices_id[i] += offset
-        
+
         self.shapes.extend(shapes)
 
         for i, vert in enumerate(proto.vertices):
             mat = proto.state.transform * mu.Vector([vert.x, vert.y, vert.z, 1])
             self.vertices.append(RwxVertex(mat[0], mat[1], mat[2], u=vert.u, v=vert.v))
 
-        
-class RwxProto(RwxScope):
-    
-    def __init__(self, **kwargs):
-        
-        super().__init__(**kwargs)
-
-        
 class RwxShape:
 
     def __init__(self, state = RwxState()):
-        
+
         self.state = copy(state)
         self.vertices_id = None
 
     def __call__(self):
-        
+
         return []
 
-        
+
 class RwxTriangle(RwxShape):
 
     def __init__(self, v1, v2, v3, **kwargs):
-        
+
         super().__init__(**kwargs)
         self.vertices_id = [v1, v2, v3]
 
     def __call__(self):
-        
+
         return [(self.vertices_id[0]-1, self.vertices_id[1]-1, self.vertices_id[2]-1)]
 
-    
+
 class RwxQuad(RwxShape):
 
     def __init__(self, v1, v2, v3, v4, **kwargs):
-        
+
         super().__init__(**kwargs)
         self.vertices_id = [v1, v2, v3, v4]
 
     def __call__(self):
-        
+
         return [(self.vertices_id[0]-1, self.vertices_id[1]-1, self.vertices_id[2]-1),\
                 (self.vertices_id[0]-1, self.vertices_id[2]-1, self.vertices_id[3]-1)]
 
@@ -302,7 +294,7 @@ class RwxQuad(RwxShape):
 class RwxPolygon(RwxShape):
 
     def __init__(self, v_id = [], **kwargs):
-        
+
         super().__init__(**kwargs)
         self.vertices_id = v_id
 
@@ -317,14 +309,14 @@ class RwxPolygon(RwxShape):
 
         if vertices_id[-1] != vertices_id[0]:
             edges.append((vertices_id[-1]-1, vertices_id[0]-1))
-        
+
         return edges
 
 
 class RwxObject:
 
     state = None
-    
+
     def __init__(self):
         self.protos = []
         self.clumps = []
@@ -336,7 +328,7 @@ class RwxObject:
         clumps = []
         for clump in cl: clumps.extend(clump)
         clumps = ["----%s" % str(c) for c in clumps]
-        
+
         return "object:%s" % os.linesep +\
                "--clumps:%s" % os.linesep +\
                os.linesep.join(clumps)
@@ -374,7 +366,7 @@ class RwxParser:
     # End regex list
 
     def __init__(self, uri, default_surface=(0.0, 0.0, 0.0)):
-        
+
         self._rwx_clump_stack = []
         self._rwx_proto_dict = {}
         self._current_scope = None
@@ -383,8 +375,6 @@ class RwxParser:
             res = None
             for line in f:
 
-                old_line = ""
- 
                 #strip comment away
                 res = self._non_comment_regex.match(line)
                 if res:
@@ -400,7 +390,7 @@ class RwxParser:
                     self._current_scope = self._rwx_clump_stack[-1]
                     self._current_scope.state.surface = default_surface
                     continue
-                
+
                 res = self._clumpbegin_regex.match(line)
                 if res:
                     rwx_clump = RwxClump(state = self._current_scope.state)
@@ -438,7 +428,7 @@ class RwxParser:
                     self._current_scope.state.texture = None if res.group(2).lower() == "null" else res.group(2)
                     self._current_scope.state.mask = res.group(4)
                     continue
-                    
+
                 res = self._triangle_regex.match(line)
                 if res:
                     v_id = [ int(x) for x in self._integer_regex.findall(res.group(2)) ]
@@ -452,7 +442,7 @@ class RwxParser:
                     self._current_scope.shapes.append(RwxQuad(v_id[0], v_id[1], v_id[2], v_id[3],\
                                                               state=self._current_scope.state))
                     continue
-                
+
                 res = self._polygon_regex.match(line)
                 if res:
                     v_len = int(self._integer_regex.findall(res.group(2))[0])
@@ -460,7 +450,7 @@ class RwxParser:
                     self._current_scope.shapes.append(RwxPolygon(v_id[0:v_len],\
                                                                  state=self._current_scope.state))
                     continue
-                
+
                 res = self._vertex_regex.match(line)
                 if res:
                     vprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
@@ -502,7 +492,7 @@ class RwxParser:
                             self._current_scope.state.transform =\
                             mu.Matrix.Rotation(radians(-rprops[3]), 4, 'Z') * self._current_scope.state.transform
                     continue
-                    
+
                 res = self._scale_regex.match(line)
                 if res:
                     sprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
@@ -547,7 +537,7 @@ def add_attr_recursive(clump, name):
 
     attr = []
     attr.extend(getattr(clump, name))
-    
+
     for c in clump.clumps:
         attr.extend(add_attr_recursive(c, name))
 
@@ -574,15 +564,15 @@ def add_faces_recursive(clump, offset=0):
     polys = []
     tmp_faces = clump.faces
     tmp_polys = clump.polys
-    
+
     for tmp_face in tmp_faces:
         faces.append((tmp_face[0]+offset, tmp_face[1]+offset, tmp_face[2]+offset))
-    
+
     for tmp_poly in tmp_polys:
         polys.append([(edge[0]+offset, edge[1]+offset) for edge in tmp_poly])
-    
+
     offset += len(clump.verts)
-    
+
     for c in clump.clumps:
         tmp_faces, tmp_polys, offset = add_faces_recursive(c, offset)
         faces.extend(tmp_faces)
@@ -597,15 +587,15 @@ def make_materials_recursive(ob, clump, folder, report, tex_extension = "jpg", m
         # Get material
 
         mat_sign = shape.state.mat_signature
-        
+
         mat = bpy.data.materials.get(mat_sign)
-        
+
         if mat is None:
             # create material
             mat = bpy.data.materials.new(name=mat_sign)
             mat.use_transparency = False
             mat.alpha = shape.state.opacity
-            
+
             if shape.state.texture and folder is not None:
                 img_path = os.path.join(folder, "%s.%s" % (shape.state.texture, tex_extension))
 
@@ -634,17 +624,17 @@ def make_materials_recursive(ob, clump, folder, report, tex_extension = "jpg", m
                             im.close()
                             mat.use_transparency = True
                             mat.alpha = 0.0
-                    
+
                 tex = bpy.data.textures.new(shape.state.texture, type = 'IMAGE')
                 tex.image = bpy.data.images.load(img_path)
                 mtex = mat.texture_slots.add()
                 mtex.texture = tex
                 mtex.texture_coords = 'UV'
-                mtex.use_map_color_diffuse = True 
-                mtex.use_map_color_emission = True 
+                mtex.use_map_color_diffuse = True
+                mtex.use_map_color_emission = True
                 mtex.emission_color_factor = 1.0
                 mtex.use_map_density = True
-                mtex.mapping = 'FLAT' 
+                mtex.mapping = 'FLAT'
 
             mat.diffuse_color = shape.state.color
             mat.specular_color = (1.0, 1.0, 1.0)
@@ -657,12 +647,12 @@ def make_materials_recursive(ob, clump, folder, report, tex_extension = "jpg", m
         else:
             if mat_sign not in ob.data.materials.keys():
                 ob.data.materials.append(mat)
-        
+
     for sub_clump in clump.clumps:
         make_materials_recursive(ob, sub_clump, folder, report, tex_extension, mask_extension)
 
 if in_blender:
-        
+
     class Rwx2BlenderOperator(bpy.types.Operator):
 
         bl_idname = "object.rwx2blender"
@@ -716,7 +706,7 @@ if in_blender:
             return {'RUNNING_MODAL'}
 
         def execute(self, context):
-        
+
             filepath = self.filepath
             texturepath = self.texturepath
 
@@ -731,7 +721,7 @@ if in_blender:
             elif not os.path.isdir(texturepath):
                 self.report({'WARNING'}, "Texture directory specified is not a directory, no texture will be used.")
                 texturepath = None
-                
+
             try:
                 parser = RwxParser(filepath, default_surface=(self.default_ambient,\
                                                               self.default_diffuse,\
@@ -752,7 +742,7 @@ if in_blender:
             polys_state = add_attr_recursive(rwx_object.clumps[0], "polys_state")
             faces_uv = add_attr_recursive(rwx_object.clumps[0], "faces_uv")
             verts_uv = add_attr_recursive(rwx_object.clumps[0], "verts_uv")
-            
+
             mesh = bpy.data.meshes.new('Mesh')
             ob = bpy.data.objects.new('Object', mesh)
 
@@ -766,7 +756,7 @@ if in_blender:
 
             uv_layer = bm.loops.layers.uv.verify()
             bm.faces.layers.tex.verify()  # currently blender needs both layers.
-                
+
             if uv_layer is None:
                 uv_layer = bm.loops.layers.uv.new()
 
@@ -791,7 +781,7 @@ if in_blender:
                 prev_vert = first_vert
                 bm_verts.append(first_vert)
                 verts_uv.append((verts_uv[poly[0][0]][0], verts_uv[poly[0][0]][1]))
-               
+
                 for edge in poly[:-1]:
 
                     if bm.verts[edge[1]] in bm_verts:
@@ -801,13 +791,13 @@ if in_blender:
                         verts_uv.append((verts_uv[edge[1]][0], verts_uv[edge[1]][1]))
                     else:
                         new_vert = bm.verts[edge[1]]
-                    
+
                     bm_edge = bm.edges.get((prev_vert, new_vert))
                     if not bm_edge:
                         bm_edge = bm.edges.new((prev_vert, new_vert))
 
                     bm_edges.append(bm_edge)
-                        
+
                     bm.edges.ensure_lookup_table()
                     prev_vert = new_vert
                     bm_verts.append(new_vert)
@@ -817,47 +807,47 @@ if in_blender:
                     bm_edge = bm.edges.new((prev_vert, first_vert))
 
                 bm_edges.append(bm_edge)
-                
+
                 bm.edges.ensure_lookup_table()
-                
+
                 geom = edgeloop_fill(bm, edges=bm_edges)["faces"]
 
                 # adjust materials and UVs for polygons
-                
+
                 for f in geom:
                     f.material_index = ob.data.materials.keys().index(polys_state[i].mat_signature)
                     for l in f.loops:
                         uv = verts_uv[l.vert.index]
                         if uv[0] is not None and uv[1] is not None:
                             l[uv_layer].uv = uv
-                               
+
                 triangulate(bm, faces=geom)
                 bm.faces.ensure_lookup_table()
-                
+
                 for merge_verts in bm_merge_verts:
                     pointmerge(bm, verts=merge_verts, merge_co=merge_verts[0].co)
 
                 bm.verts.ensure_lookup_table()
                 bm.edges.ensure_lookup_table()
 
-                    
+
             bm.to_mesh(mesh)
             bm.free()
 
             mesh.use_auto_smooth = True
-            mesh.auto_smooth_angle = 3.14/3.0 
+            mesh.auto_smooth_angle = 3.14/3.0
             mesh.calc_normals()
 
             ob.location = (0,0,0)
             ob.scale = (10,10,10)
             ob.rotation_euler = (radians(90), 0, 0)
-            ob.show_name = True 
+            ob.show_name = True
             # Link object to scene
             bpy.context.scene.objects.link(ob)
 
             # Update mesh with new data
             mesh.update(calc_edges=True)
-        
+
             return {'FINISHED'}
 
 def import_menu_func_rwx(self, context):
@@ -872,6 +862,6 @@ def unregister():
     bpy.types.INFO_MT_file_import.remove(import_menu_func_rwx)
 
 if __name__ == "__main__":
-    
+
     if in_blender: register()
 
