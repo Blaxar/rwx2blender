@@ -378,7 +378,6 @@ class RwxParser:
                 #strip comment away
                 res = self._non_comment_regex.match(line)
                 if res:
-                    old_line = line
                     line = res.group(1)
 
                 #replace tabs with spaces
@@ -533,18 +532,18 @@ class RwxParser:
         return self._rwx_clump_stack[0]
 
 
-def add_attr_recursive(clump, name):
+def gather_attr_recursive(clump, name):
 
     attr = []
     attr.extend(getattr(clump, name))
 
     for c in clump.clumps:
-        attr.extend(add_attr_recursive(c, name))
+        attr.extend(gather_attr_recursive(c, name))
 
     return attr
 
 
-def add_vertices_recursive(clump, transform = mu.Matrix.Identity(4)):
+def gather_vertices_recursive(clump, transform = mu.Matrix.Identity(4)):
 
     vertices = []
     transform = transform * clump.state.transform
@@ -553,12 +552,12 @@ def add_vertices_recursive(clump, transform = mu.Matrix.Identity(4)):
         vertices.append((vert[0], vert[1], vert[2]))
 
     for c in clump.clumps:
-        vertices.extend(add_vertices_recursive(c))
+        vertices.extend(gather_vertices_recursive(c))
 
     return vertices
 
 
-def add_faces_recursive(clump, offset=0):
+def gather_faces_recursive(clump, offset=0):
 
     faces = []
     polys = []
@@ -574,7 +573,7 @@ def add_faces_recursive(clump, offset=0):
     offset += len(clump.verts)
 
     for c in clump.clumps:
-        tmp_faces, tmp_polys, offset = add_faces_recursive(c, offset)
+        tmp_faces, tmp_polys, offset = gather_faces_recursive(c, offset)
         faces.extend(tmp_faces)
         polys.extend(tmp_polys)
 
@@ -736,12 +735,12 @@ if in_blender:
                 self.report({'ERROR'}, "No clump registered after parsing the input file (likely not a proper .rwx).")
                 return {'CANCELLED'}
 
-            verts = add_vertices_recursive(rwx_object.clumps[0])
-            faces, polys, offset = add_faces_recursive(rwx_object.clumps[0])
-            faces_state = add_attr_recursive(rwx_object.clumps[0], "faces_state")
-            polys_state = add_attr_recursive(rwx_object.clumps[0], "polys_state")
-            faces_uv = add_attr_recursive(rwx_object.clumps[0], "faces_uv")
-            verts_uv = add_attr_recursive(rwx_object.clumps[0], "verts_uv")
+            verts = gather_vertices_recursive(rwx_object.clumps[0])
+            faces, polys, offset = gather_faces_recursive(rwx_object.clumps[0])
+            faces_state = gather_attr_recursive(rwx_object.clumps[0], "faces_state")
+            polys_state = gather_attr_recursive(rwx_object.clumps[0], "polys_state")
+            faces_uv = gather_attr_recursive(rwx_object.clumps[0], "faces_uv")
+            verts_uv = gather_attr_recursive(rwx_object.clumps[0], "verts_uv")
 
             mesh = bpy.data.meshes.new('Mesh')
             ob = bpy.data.objects.new('Object', mesh)
