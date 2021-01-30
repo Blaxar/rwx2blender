@@ -54,8 +54,8 @@ from enum import Enum
 bl_info = {"name": "rwx2blender",
            "author": "Julien Bardagi (Blaxar Waldarax)",
            "description": "Add-on to import Active Worlds RenderWare scripts (.rwx)",
-           "version": (0, 2, 3),
-           "blender": (2, 79, 0),
+           "version": (0, 2, 4),
+           "blender": (2, 91, 0),
            "location": "File > Import...",
            "category": "Import-Export"}
 
@@ -251,7 +251,7 @@ class RwxClump(RwxScope):
         self.shapes.extend(shapes)
 
         for i, vert in enumerate(proto.vertices):
-            mat = proto.state.transform * mu.Vector([vert.x, vert.y, vert.z, 1])
+            mat = proto.state.transform @ mu.Vector([vert.x, vert.y, vert.z, 1])
             self.vertices.append(RwxVertex(mat[0], mat[1], mat[2], u=vert.u, v=vert.v))
 
 class RwxShape:
@@ -365,167 +365,178 @@ class RwxParser:
 
     # End regex list
 
-    def __init__(self, uri, default_surface=(0.0, 0.0, 0.0)):
+    def __init__(self, uri, report, default_surface=(0.0, 0.0, 0.0)):
 
         self._rwx_clump_stack = []
         self._rwx_proto_dict = {}
         self._current_scope = None
 
-        with fileinput.input(files=(uri,)) as f:
-            res = None
-            for line in f:
+        rwx_file = open(uri, mode = 'r')
 
-                #strip comment away
-                res = self._non_comment_regex.match(line)
-                if res:
-                    line = res.group(1)
+        try:
+            lines = rwx_file.readlines()
+        except UnicodeDecodeError:
+            report({'WARNING'}, "Failed to open file using local encoding, trying cp437 (Windows/DOS) instead")
 
-                #replace tabs with spaces
+            lines = open(uri, mode = 'r', encoding = 'cp437').readlines()
+
+        res = None
+        for line in lines:
+            if line[0] == '#':
+                # The whole line is a comment: we can safely ditch it
+                continue
+
+            # Strip comment away
+            res = self._non_comment_regex.match(line)
+            if res:
+                line = res.group(1)
+
+                # Replace tabs with spaces
                 line = line.replace("\t", " ")
 
-                res = self._modelbegin_regex.match(line)
-                if res:
-                    self._rwx_clump_stack.append(RwxObject())
-                    self._current_scope = self._rwx_clump_stack[-1]
-                    self._current_scope.state.surface = default_surface
-                    continue
+            res = self._modelbegin_regex.match(line)
+            if res:
+                self._rwx_clump_stack.append(RwxObject())
+                self._current_scope = self._rwx_clump_stack[-1]
+                self._current_scope.state.surface = default_surface
+                continue
 
-                res = self._clumpbegin_regex.match(line)
-                if res:
-                    rwx_clump = RwxClump(state = self._current_scope.state)
-                    self._rwx_clump_stack[-1].clumps.append(rwx_clump)
-                    self._rwx_clump_stack.append(rwx_clump)
-                    self._current_scope = rwx_clump
-                    continue
+            res = self._clumpbegin_regex.match(line)
+            if res:
+                rwx_clump = RwxClump(state = self._current_scope.state)
+                self._rwx_clump_stack[-1].clumps.append(rwx_clump)
+                self._rwx_clump_stack.append(rwx_clump)
+                self._current_scope = rwx_clump
+                continue
 
-                res = self._clumpend_regex.match(line)
-                if res:
-                    self._rwx_clump_stack.pop()
-                    self._current_scope = self._rwx_clump_stack[-1]
-                    continue
+            res = self._clumpend_regex.match(line)
+            if res:
+                self._rwx_clump_stack.pop()
+                self._current_scope = self._rwx_clump_stack[-1]
+                continue
 
-                res = self._protobegin_regex.match(line)
-                if res:
-                    name = res.group(2)
-                    self._rwx_proto_dict[name] = RwxScope(state = self._current_scope.state)
-                    self._current_scope = self._rwx_proto_dict[name]
-                    continue
+            res = self._protobegin_regex.match(line)
+            if res:
+                name = res.group(2)
+                self._rwx_proto_dict[name] = RwxScope(state = self._current_scope.state)
+                self._current_scope = self._rwx_proto_dict[name]
+                continue
 
-                res = self._protoend_regex.match(line)
-                if res:
-                    self._current_scope = self._rwx_clump_stack[0]
-                    continue
+            res = self._protoend_regex.match(line)
+            if res:
+                self._current_scope = self._rwx_clump_stack[0]
+                continue
 
-                res = self._protoinstance_regex.match(line)
-                if res:
-                    name = res.group(2)
-                    self._current_scope.apply_proto(self._rwx_proto_dict[name])
-                    continue
+            res = self._protoinstance_regex.match(line)
+            if res:
+                name = res.group(2)
+                self._current_scope.apply_proto(self._rwx_proto_dict[name])
+                continue
 
-                res = self._texture_regex.match(line)
-                if res:
-                    self._current_scope.state.texture = None if res.group(2).lower() == "null" else res.group(2)
-                    self._current_scope.state.mask = res.group(4)
-                    continue
+            res = self._texture_regex.match(line)
+            if res:
+                self._current_scope.state.texture = None if res.group(2).lower() == "null" else res.group(2)
+                self._current_scope.state.mask = res.group(4)
+                continue
 
-                res = self._triangle_regex.match(line)
-                if res:
-                    v_id = [ int(x) for x in self._integer_regex.findall(res.group(2)) ]
-                    self._current_scope.shapes.append(RwxTriangle(v_id[0], v_id[1], v_id[2],\
+            res = self._triangle_regex.match(line)
+            if res:
+                v_id = [ int(x) for x in self._integer_regex.findall(res.group(2)) ]
+                self._current_scope.shapes.append(RwxTriangle(v_id[0], v_id[1], v_id[2],\
                                                                   state=self._current_scope.state))
-                    continue
+                continue
 
-                res = self._quad_regex.match(line)
-                if res:
-                    v_id = [ int(x) for x in self._integer_regex.findall(res.group(2)) ]
-                    self._current_scope.shapes.append(RwxQuad(v_id[0], v_id[1], v_id[2], v_id[3],\
+            res = self._quad_regex.match(line)
+            if res:
+                v_id = [ int(x) for x in self._integer_regex.findall(res.group(2)) ]
+                self._current_scope.shapes.append(RwxQuad(v_id[0], v_id[1], v_id[2], v_id[3],\
                                                               state=self._current_scope.state))
-                    continue
+                continue
 
-                res = self._polygon_regex.match(line)
-                if res:
-                    v_len = int(self._integer_regex.findall(res.group(2))[0])
-                    v_id = [ int(x) for x in self._integer_regex.findall(res.group(3)) ]
-                    self._current_scope.shapes.append(RwxPolygon(v_id[0:v_len],\
+            res = self._polygon_regex.match(line)
+            if res:
+                v_len = int(self._integer_regex.findall(res.group(2))[0])
+                v_id = [ int(x) for x in self._integer_regex.findall(res.group(3)) ]
+                self._current_scope.shapes.append(RwxPolygon(v_id[0:v_len],\
                                                                  state=self._current_scope.state))
-                    continue
+                continue
 
-                res = self._vertex_regex.match(line)
-                if res:
-                    vprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
-                    if res.group(7):
-                        vprops.extend([ float(x[0]) for x in self._float_regex.findall(res.group(7)) ])
-                        self._current_scope.vertices.append(RwxVertex(vprops[0], vprops[1], vprops[2], u = vprops[3], v = vprops[4]))
-                    else: self._current_scope.vertices.append(RwxVertex(vprops[0], vprops[1], vprops[2]))
-                    continue
+            res = self._vertex_regex.match(line)
+            if res:
+                vprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
+                if res.group(7):
+                    vprops.extend([ float(x[0]) for x in self._float_regex.findall(res.group(7)) ])
+                    self._current_scope.vertices.append(RwxVertex(vprops[0], vprops[1], vprops[2], u = vprops[3], v = vprops[4]))
+                else: self._current_scope.vertices.append(RwxVertex(vprops[0], vprops[1], vprops[2]))
+                continue
 
-                res = self._color_regex.match(line)
-                if res:
-                    cprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
-                    if len(cprops) == 3:
-                        self._current_scope.state.color = tuple(cprops)
-                    continue
+            res = self._color_regex.match(line)
+            if res:
+                cprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
+                if len(cprops) == 3:
+                    self._current_scope.state.color = tuple(cprops)
+                continue
 
-                res = self._opacity_regex.match(line)
-                if res:
-                    self._current_scope.state.opacity = float(res.group(2))
-                    continue
+            res = self._opacity_regex.match(line)
+            if res:
+                self._current_scope.state.opacity = float(res.group(2))
+                continue
 
-                res = self._transform_regex.match(line)
-                if res:
-                    tprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
-                    if len(tprops) == 16: self._current_scope.state.transform = mu.Matrix(list(zip(*[iter(tprops)]*4))).transposed()
-                    continue
+            res = self._transform_regex.match(line)
+            if res:
+                tprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
+                if len(tprops) == 16: self._current_scope.state.transform = mu.Matrix(list(zip(*[iter(tprops)]*4))).transposed()
+                continue
 
-                res = self._rotate_regex.match(line)
-                if res:
-                    rprops = [ int(x) for x in self._integer_regex.findall(res.group(2)) ]
-                    if len(rprops) == 4:
-                        if rprops[0]:
-                            self._current_scope.state.transform =\
-                            mu.Matrix.Rotation(radians(-rprops[3]), 4, 'X') * self._current_scope.state.transform
-                        if rprops[1]:
-                            self._current_scope.state.transform =\
-                            mu.Matrix.Rotation(radians(-rprops[3]), 4, 'Y') * self._current_scope.state.transform
-                        if rprops[2]:
-                            self._current_scope.state.transform =\
-                            mu.Matrix.Rotation(radians(-rprops[3]), 4, 'Z') * self._current_scope.state.transform
-                    continue
-
-                res = self._scale_regex.match(line)
-                if res:
-                    sprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
-                    if len(sprops) == 3:
+            res = self._rotate_regex.match(line)
+            if res:
+                rprops = [ int(x) for x in self._integer_regex.findall(res.group(2)) ]
+                if len(rprops) == 4:
+                    if rprops[0]:
                         self._current_scope.state.transform =\
-                        mu.Matrix.Scale(sprops[0], 4, (1.0, 0.0, 0.0)) *\
-                        mu.Matrix.Scale(sprops[1], 4, (0.0, 1.0, 0.0)) *\
-                        mu.Matrix.Scale(sprops[2], 4, (0.0, 0.0, 1.0)) * self._current_scope.state.transform
-                    continue
+                            mu.Matrix.Rotation(radians(-rprops[3]), 4, 'X') @ self._current_scope.state.transform
+                    if rprops[1]:
+                        self._current_scope.state.transform =\
+                            mu.Matrix.Rotation(radians(-rprops[3]), 4, 'Y') @ self._current_scope.state.transform
+                    if rprops[2]:
+                        self._current_scope.state.transform =\
+                            mu.Matrix.Rotation(radians(-rprops[3]), 4, 'Z') @ self._current_scope.state.transform
+                continue
 
-                res = self._surface_regex.match(line)
-                if res:
-                    sprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
-                    if len(sprops) == 3:
-                        self._current_scope.state.surface = tuple(sprops)
-                    continue
+            res = self._scale_regex.match(line)
+            if res:
+                sprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
+                if len(sprops) == 3:
+                    self._current_scope.state.transform =\
+                        mu.Matrix.Scale(sprops[0], 4, (1.0, 0.0, 0.0)) @\
+                        mu.Matrix.Scale(sprops[1], 4, (0.0, 1.0, 0.0)) @\
+                        mu.Matrix.Scale(sprops[2], 4, (0.0, 0.0, 1.0)) @ self._current_scope.state.transform
+                continue
 
-                res = self._ambient_regex.match(line)
-                if res:
-                    surf = self._current_scope.state.surface
-                    self._current_scope.state.surface = (float(res.group(2)), surf[1], surf[2])
-                    continue
+            res = self._surface_regex.match(line)
+            if res:
+                sprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
+                if len(sprops) == 3:
+                    self._current_scope.state.surface = tuple(sprops)
+                continue
 
-                res = self._diffuse_regex.match(line)
-                if res:
-                    surf = self._current_scope.state.surface
-                    self._current_scope.state.surface = (surf[0], float(res.group(2)), surf[2])
-                    continue
+            res = self._ambient_regex.match(line)
+            if res:
+                surf = self._current_scope.state.surface
+                self._current_scope.state.surface = (float(res.group(2)), surf[1], surf[2])
+                continue
 
-                res = self._specular_regex.match(line)
-                if res:
-                    surf = self._current_scope.state.surface
-                    self._current_scope.state.surface = (surf[0], surf[1], float(res.group(2)))
-                    continue
+            res = self._diffuse_regex.match(line)
+            if res:
+                surf = self._current_scope.state.surface
+                self._current_scope.state.surface = (surf[0], float(res.group(2)), surf[2])
+                continue
+
+            res = self._specular_regex.match(line)
+            if res:
+                surf = self._current_scope.state.surface
+                self._current_scope.state.surface = (surf[0], surf[1], float(res.group(2)))
+                continue
 
 
     def __call__(self):
@@ -546,9 +557,9 @@ def gather_attr_recursive(clump, name):
 def gather_vertices_recursive(clump, transform = mu.Matrix.Identity(4)):
 
     vertices = []
-    transform = transform * clump.state.transform
+    transform = transform @ clump.state.transform
     for v in clump.verts:
-        vert = transform * mu.Vector([v[0], v[1], v[2], 1])
+        vert = transform @ mu.Vector([v[0], v[1], v[2], 1])
         vertices.append((vert[0], vert[1], vert[2]))
 
     for c in clump.clumps:
@@ -592,8 +603,12 @@ def make_materials_recursive(ob, clump, folder, report, tex_extension = "jpg", m
         if mat is None:
             # create material
             mat = bpy.data.materials.new(name=mat_sign)
-            mat.use_transparency = False
-            mat.alpha = shape.state.opacity
+
+            mat.use_nodes = True
+
+            # We get the existing Principeld BSDF node, we will need it in any case
+            bsdf = mat.node_tree.nodes["Principled BSDF"]
+            tex = mat.node_tree.nodes.new('ShaderNodeTexImage')
 
             if shape.state.texture and folder is not None:
                 img_path = os.path.join(folder, "%s.%s" % (shape.state.texture, tex_extension))
@@ -621,31 +636,58 @@ def make_materials_recursive(ob, clump, folder, report, tex_extension = "jpg", m
                             im = Image.merge("RGBA", rgba_chans)
                             im.save(img_path)
                             im.close()
-                            mat.use_transparency = True
-                            mat.alpha = 0.0
 
-                tex = bpy.data.textures.new(shape.state.texture, type = 'IMAGE')
+                            # At this stage, we know our texture has transparency: we need to accomodate
+                            # the current shader pipeline for this so we clear existing links, effectively
+                            # unlinking the principled bsdf from the material surface
+                            mat.node_tree.links.clear()
+
+                            # We create a MixShader to handle texture transparency
+                            mix = mat.node_tree.nodes.new('ShaderNodeMixShader')
+
+                            # We link the Alpha socket from the TexImage node to the Fac socket
+                            # of the MixShader
+                            mat.node_tree.links.new(mix.inputs['Fac'], tex.outputs['Alpha'])
+
+                            # We create a Transparent BSDF Node and link it to the first 'Shader' socket
+                            # of the MixShader node
+                            transparent = mat.node_tree.nodes.new('ShaderNodeBsdfTransparent')
+                            mat.node_tree.links.new(mix.inputs[1], transparent.outputs['BSDF'])
+
+                            # We link the Principled BSDF output socket to the second MixShader 'Shader' socket
+                            mat.node_tree.links.new(mix.inputs[2], bsdf.outputs['BSDF'])
+
+                            # Get the material output node
+                            mat_output = mat.node_tree.nodes['Material Output']
+
+                            # We link the MixShader output to the material Surface input
+                            mat.node_tree.links.new(mat_output.inputs['Surface'], mix.outputs['Shader'])
+
+                            mat.blend_method = 'BLEND'
+
                 tex.image = bpy.data.images.load(img_path)
-                mtex = mat.texture_slots.add()
-                mtex.texture = tex
-                mtex.texture_coords = 'UV'
-                mtex.use_map_color_diffuse = True
-                mtex.use_map_color_emission = True
-                mtex.emission_color_factor = 1.0
-                mtex.use_map_density = True
-                mtex.mapping = 'FLAT'
 
-            mat.diffuse_color = shape.state.color
+                # Link TexImage Node to BSDF node
+                mat.node_tree.links.new(bsdf.inputs['Base Color'], tex.outputs['Color'])
+
+            else:
+                bsdf.inputs['Base Color'].default_value[:3] = shape.state.color
+
+            bsdf.inputs['Alpha'].default_value = shape.state.opacity
+            bsdf.inputs['Specular'].default_value = shape.state.surface[2]
+
+            mat.diffuse_color[:3] = shape.state.color
+            mat.diffuse_color[3] = shape.state.opacity
             mat.specular_color = (1.0, 1.0, 1.0)
-            mat.ambient = shape.state.surface[0]
-            mat.diffuse_intensity = shape.state.surface[1]
-            mat.specular_intensity = shape.state.surface[2]
 
-            ob.data.materials.append(mat)
+            if shape.state.opacity < 1.0:
+                mat.blend_method = 'BLEND'
 
-        else:
-            if mat_sign not in ob.data.materials.keys():
+            if ob.data.materials:
                 ob.data.materials.append(mat)
+
+        if mat_sign not in ob.data.materials.keys():
+            ob.data.materials.append(mat)
 
     for sub_clump in clump.clumps:
         make_materials_recursive(ob, sub_clump, folder, report, tex_extension, mask_extension)
@@ -722,13 +764,13 @@ if in_blender:
                 texturepath = None
 
             try:
-                parser = RwxParser(filepath, default_surface=(self.default_ambient,\
+                parser = RwxParser(filepath, self.report, default_surface=(self.default_ambient,\
                                                               self.default_diffuse,\
                                                               self.default_specular))
                 rwx_object = parser()
             except Exception as exc:
                 print_exc(exc)
-                self.report({'ERROR'}, "Could not parse input file (either not a proper .rwx or a bug on my part).")
+                self.report({'ERROR'}, "Could not parse input file (either not a proper .rwx or a bug on the script part).")
                 return {'CANCELLED'}
 
             if len(rwx_object.clumps) == 0:
@@ -754,7 +796,6 @@ if in_blender:
             bm.from_mesh(mesh)
 
             uv_layer = bm.loops.layers.uv.verify()
-            bm.faces.layers.tex.verify()  # currently blender needs both layers.
 
             if uv_layer is None:
                 uv_layer = bm.loops.layers.uv.new()
@@ -842,7 +883,7 @@ if in_blender:
             ob.rotation_euler = (radians(90), 0, 0)
             ob.show_name = True
             # Link object to scene
-            bpy.context.scene.objects.link(ob)
+            bpy.context.collection.objects.link(ob)
 
             # Update mesh with new data
             mesh.update(calc_edges=True)
@@ -854,11 +895,11 @@ def import_menu_func_rwx(self, context):
 
 def register():
     bpy.utils.register_class(Rwx2BlenderOperator)
-    bpy.types.INFO_MT_file_import.append(import_menu_func_rwx)
+    bpy.types.TOPBAR_MT_file_import.append(import_menu_func_rwx)
 
 def unregister():
     bpy.utils.unregister_class(Rwx2BlenderOperator)
-    bpy.types.INFO_MT_file_import.remove(import_menu_func_rwx)
+    bpy.types.TOPBAR_MT_file_import.remove(import_menu_func_rwx)
 
 if __name__ == "__main__":
 
