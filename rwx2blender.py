@@ -54,7 +54,7 @@ from enum import Enum
 bl_info = {"name": "rwx2blender",
            "author": "Julien Bardagi (Blaxar Waldarax)",
            "description": "Add-on to import Active Worlds RenderWare scripts (.rwx)",
-           "version": (0, 2, 4),
+           "version": (0, 2, 5),
            "blender": (2, 91, 0),
            "location": "File > Import...",
            "category": "Import-Export"}
@@ -74,9 +74,9 @@ class TextureMode(Enum):
     FILTER = 3
 
 class MaterialMode(Enum):
-    NONE = None
-    NULL = 1
-    DOUBLE = 2
+    NONE = 1
+    NULL = 2
+    DOUBLE = 3
 
 class RwxState:
 
@@ -362,6 +362,7 @@ class RwxParser:
     _ambient_regex = re.compile("^ *(ambient)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", re.IGNORECASE)
     _diffuse_regex = re.compile("^ *(diffuse)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", re.IGNORECASE)
     _specular_regex = re.compile("^ *(specular)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", re.IGNORECASE)
+    _materialmode_regex = re.compile("^ *((add)?materialmode(s)?) +([A-Za-z0-9_\\-]+).*$", re.IGNORECASE)
 
     # End regex list
 
@@ -391,8 +392,8 @@ class RwxParser:
             if res:
                 line = res.group(1)
 
-                # Replace tabs with spaces
-                line = line.replace("\t", " ")
+            # Replace tabs with spaces
+            line = line.replace('\t', ' ')
 
             res = self._modelbegin_regex.match(line)
             if res:
@@ -536,6 +537,17 @@ class RwxParser:
             if res:
                 surf = self._current_scope.state.surface
                 self._current_scope.state.surface = (surf[0], surf[1], float(res.group(2)))
+                continue
+
+            res = self._materialmode_regex.match(line)
+            if res:
+                mat_mode = res.group(4).lower()
+                if mat_mode == "none":
+                    self._current_scope.state.materialmode = MaterialMode.NONE
+                elif mat_mode == "null":
+                    self._current_scope.state.materialmode = MaterialMode.NULL
+                elif mat_mode == "double":
+                    self._current_scope.state.materialmode = MaterialMode.DOUBLE
                 continue
 
 
@@ -682,6 +694,13 @@ def make_materials_recursive(ob, clump, folder, report, tex_extension = "jpg", m
 
             if shape.state.opacity < 1.0:
                 mat.blend_method = 'BLEND'
+
+            if shape.state.materialmode == MaterialMode.NONE:
+                mat.use_backface_culling = True
+            elif shape.state.materialmode == MaterialMode.NULL:
+                mat.diffuse_color[3] = 0.0
+            elif shape.state.materialmode == MaterialMode.DOUBLE:
+                mat.use_backface_culling = False
 
             if ob.data.materials:
                 ob.data.materials.append(mat)
