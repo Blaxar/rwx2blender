@@ -41,3 +41,4 @@ The assumed path for the texture folder will be:
 ### References:
 
 http://www.tnlc.com/rw/rwx.html
+http://wiki.activeworlds.com/index.php?title=Renderware

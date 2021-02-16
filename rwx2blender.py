@@ -54,7 +54,7 @@ from enum import Enum
 bl_info = {"name": "rwx2blender",
            "author": "Julien Bardagi (Blaxar Waldarax)",
            "description": "Add-on to import Active Worlds RenderWare scripts (.rwx)",
-           "version": (0, 2, 5),
+           "version": (0, 2, 6),
            "blender": (2, 91, 0),
            "location": "File > Import...",
            "category": "Import-Export"}
@@ -363,6 +363,7 @@ class RwxParser:
     _diffuse_regex = re.compile("^ *(diffuse)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", re.IGNORECASE)
     _specular_regex = re.compile("^ *(specular)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", re.IGNORECASE)
     _materialmode_regex = re.compile("^ *((add)?materialmode(s)?) +([A-Za-z0-9_\\-]+).*$", re.IGNORECASE)
+    _identity_regex = re.compile("^identity$", re.IGNORECASE)
 
     # End regex list
 
@@ -393,7 +394,7 @@ class RwxParser:
                 line = res.group(1)
 
             # Replace tabs with spaces
-            line = line.replace('\t', ' ')
+            line = line.replace('\t', ' ').strip()
 
             res = self._modelbegin_regex.match(line)
             if res:
@@ -550,6 +551,10 @@ class RwxParser:
                     self._current_scope.state.materialmode = MaterialMode.DOUBLE
                 continue
 
+            res = self._identity_regex.match(line)
+            if res:
+                self._current_scope.state.transform = mu.Matrix.Identity(4)
+                continue
 
     def __call__(self):
         return self._rwx_clump_stack[0]
@@ -566,10 +571,12 @@ def gather_attr_recursive(clump, name):
     return attr
 
 
-def gather_vertices_recursive(clump, transform = mu.Matrix.Identity(4)):
+def gather_vertices_recursive(clump):
 
     vertices = []
-    transform = transform @ clump.state.transform
+
+    transform = clump.state.transform
+
     for v in clump.verts:
         vert = transform @ mu.Vector([v[0], v[1], v[2], 1])
         vertices.append((vert[0], vert[1], vert[2]))
