@@ -333,6 +333,47 @@ class RwxObject:
                "--clumps:%s" % os.linesep +\
                os.linesep.join(clumps)
 
+def get_final_transform(ctx):
+    pass
+
+def make_blender_material():
+    pass
+
+def reset_geometry(ctx):
+    pass
+
+def make_mesh_to_current_group(ctx):
+    pass
+
+def commit_buffer_geometry_group(ctx):
+    pass
+
+def add_triangle(ctx, a, b, c):
+    pass
+
+def add_quad(ctx, a, b, c, d):
+    pass
+
+def add_polygon(ctx, indices):
+    pass
+
+def push_current_group(ctx):
+    pass
+
+def pop_current_group(ctx):
+    pass
+
+def push_current_transform(ctx):
+    pass
+
+def pop_current_transform(ctx):
+    pass
+
+def save_current_transform(ctx):
+    pass
+
+def load_current_transform(ctx):
+    pass
 
 class RwxParser:
 
