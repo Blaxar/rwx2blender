@@ -78,6 +78,32 @@ class MaterialMode(Enum):
     NULL = 2
     DOUBLE = 3
 
+class RwxCtx:
+
+    def __init__(self):
+
+        self.group_stack = []
+        self.current_group = None
+
+        self.transform_stack = []
+        self.transform_saves = []
+
+        self.current_transform = mu.Matrix.Identity(4)
+        self.current_buffer_geometry = None
+        self.current_buffer_vertices = []
+        self.current_buffer_uvs = []
+        self.current_buffer_faces = []
+
+        self.current_buffer_face_count = 0
+        self.current_buffer_group_first_face_id = 0
+
+        self.previous_material_id = None
+
+        self.rwx_clump_stack = []
+        self.rwx_proto_dict = {}
+
+        self.material_manager = None
+
 class RwxState:
 
     def __init__(self):
@@ -333,47 +359,136 @@ class RwxObject:
                "--clumps:%s" % os.linesep +\
                os.linesep.join(clumps)
 
+
 def get_final_transform(ctx):
-    pass
+
+    transform = mu.Matrix.Indentity(4)
+
+    for t in ctx.transform_stack:
+        transform = transform @ t
+
+    return transform @ ctx.current_transform
+
 
 def make_blender_material():
     pass
 
+
 def reset_geometry(ctx):
-    pass
+
+    if ctx.current_buffer_face_count:
+        commit_buffer_geometry_group(ctx)
+
+    #TODO: instanciate new geometry with Blender's API
+    ctx.current_buffer_geometry = None
+    ctx.current_buffer_vertices = []
+    ctx.current_buffer_uvs = []
+    ctx.current_buffer_faces = []
+
+    ctx.current_buffer_face_count = 0
+    ctx.current_buffer_group_first_face_id = 0
+
+    ctx.previous_material_id = None
+
 
 def make_mesh_to_current_group(ctx):
-    pass
+
+    if ctx.current_buffer_face_count > 0:
+        commit_buffer_geometry_group(ctx)
+
+    if len(ctx.current_buffer_faces) > 0:
+        #TODO: instanciate geometry with positions and attributes (UVs) and faces
+
+        #ctx.current_buffer_geometry.setAttribute(...)
+        #ctx.current_buffer_geometry.setAttribute(...)
+        #ctx.current_buffer_geometry.setIndex(ctx.current_buffer_faces);
+
+        #ctx.current_buffer_geometry.uvsNeedUpdate = True;
+        #ctx.currentBufferGeometry.computeVertexNormals();
+
+        #TODO: create new mesh using the geometry and materials
+        mesh = None
+
+        #const mesh = new Mesh( ctx.currentBufferGeometry, ctx.materialManager.getCurrentMaterialList() );
+
+        #TODO: add mesh to current group
+        ctx.current_group.add(mesh)
+
 
 def commit_buffer_geometry_group(ctx):
-    pass
+    #TODO: Make new out of group existing data
+    #ctx.currentBufferGeometry.addGroup( ctx.currentBufferGroupFirstFaceID, ctx.currentBufferFaceCount * 3, ctx.previousMaterialID );
+
+    # Set everything ready for the next group to start
+    ctx.previous_material_id = ctx.material_manager.get_current_material_id()
+    ctx.current_buffer_group_first_face_id = ctx.current_buffer_group_first_face_id + ctx.current_buffer_face_count * 3
+    ctx.current_buffer_face_count = 0
+
 
 def add_triangle(ctx, a, b, c):
-    pass
+    if ctx.material_manager.get_current_material_id() != ctx.previous_material_id:
+        commit_buffer_geometry_group(ctx)
+
+    #Add new face
+    ctx.current_buffer_face_count += 1
+    ctx.current_buffer_faces.push(a, b, c)
+
 
 def add_quad(ctx, a, b, c, d):
-    pass
+    if ctx.material_manager.get_current_material_id() != ctx.previous_material_id:
+        commit_buffer_geometry_group(ctx)
+
+    #TODO: wireframe quad handling somewhere there
+
+    # Add two new faces
+    ctx.current_buffer_face_count += 2
+    ctx.current_buffer_faces.push(a, b, c)
+    ctx.current_buffer_faces.push(a, c, d)
+
 
 def add_polygon(ctx, indices):
-    pass
+    if ctx.material_manager.get_current_material_id() != ctx.previous_material_id:
+        commit_buffer_geometry_group(ctx)
+
+    #TODO: triangulate using indices
+    new_faces = None
+
+    ctx.current_buffer_face_count += len(new_faces) / 3
+    ctx.current_buffer_faces.extend(new_faces)
+
 
 def push_current_group(ctx):
-    pass
+    #TODO: create new group
+    group = None
+
+    ctx.current_group.add(group)
+    ctx.group_stack.push(ctx.current_group)
+    ctx.current_group = group
+
 
 def pop_current_group(ctx):
-    pass
+    ctx.current_group = ctx.group_stack.pop()
+
 
 def push_current_transform(ctx):
-    pass
+    ctx.transform_stack.push(ctx.current_transform)
+    ctx.currentTransform = mu.Matrix.Identity(4)
+
 
 def pop_current_transform(ctx):
-    pass
+    ctx.currentTransform = ctx.transform_stack.pop()
+
 
 def save_current_transform(ctx):
-    pass
+    ctx.transform_saves.push(ctx.current_transform.clone())
+
 
 def load_current_transform(ctx):
-    pass
+    if len(ctx.transform_saves) > 0:
+        ctx.currentTransform = ctx.transformSaves.pop()
+    else:
+        ctx.current_transform = mu.Matrix.Identity(4)
+
 
 class RwxParser:
 
@@ -413,6 +528,8 @@ class RwxParser:
         self._rwx_clump_stack = []
         self._rwx_proto_dict = {}
         self._current_scope = None
+
+        ctx = RwxCtx()
 
         rwx_file = open(uri, mode = 'r')
 
