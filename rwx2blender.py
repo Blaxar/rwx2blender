@@ -54,8 +54,8 @@ from enum import Enum
 bl_info = {"name": "rwx2blender",
            "author": "Julien Bardagi (Blaxar Waldarax)",
            "description": "Add-on to import Active Worlds RenderWare scripts (.rwx)",
-           "version": (0, 2, 6),
-           "blender": (2, 91, 0),
+           "version": (0, 2, 7),
+           "blender": (2, 93, 0),
            "location": "File > Import...",
            "category": "Import-Export"}
 
@@ -722,24 +722,31 @@ if in_blender:
 
     class Rwx2BlenderOperator(bpy.types.Operator):
 
-        bl_idname = "object.rwx2blender"
-        bl_label = "Import"
+        bl_idname = "import_mesh.rwx"
+        bl_description = "Load STL triangle mesh data"
+        bl_label = "Import RWX"
         bl_options = {'REGISTER'}
 
-        filepath= StringProperty(
+        filename_ext = ".rwx"
+
+        filter_glob: StringProperty(
+            default="*.rwx",
+            options={'HIDDEN'},
+        )
+        filepath: StringProperty(
             name="File Path",
             description="Filepath used for importing RenderWare .rwx file",
             maxlen=1024,
             default="",
             subtype='FILE_PATH')
-        texturepath= StringProperty(
+        texturepath: StringProperty(
             name="Texture Path",
             description="Path to the texture directory",
             maxlen=1024,
             default="",
             subtype='DIR_PATH')
 
-        default_ambient= FloatProperty(
+        default_ambient: FloatProperty(
             name="Default Ambient",
             description="Default ambient light intensity for materials",
             default=0.0,
@@ -748,7 +755,7 @@ if in_blender:
             step=0.1,
             precision=3)
 
-        default_diffuse= FloatProperty(
+        default_diffuse: FloatProperty(
             name="Default Diffuse",
             description="Default diffuse light intensity for materials",
             default=0.0,
@@ -757,7 +764,7 @@ if in_blender:
             step=0.1,
             precision=3)
 
-        default_specular= FloatProperty(
+        default_specular: FloatProperty(
             name="Default Specular",
             description="Default specular light intensity for materials",
             default=0.0,
@@ -791,8 +798,8 @@ if in_blender:
 
             try:
                 parser = RwxParser(filepath, self.report, default_surface=(self.default_ambient,\
-                                                              self.default_diffuse,\
-                                                              self.default_specular))
+                                                                           self.default_diffuse,\
+                                                                           self.default_specular))
                 rwx_object = parser()
             except Exception as exc:
                 print_exc(exc)
