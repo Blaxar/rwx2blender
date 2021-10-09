@@ -54,7 +54,7 @@ from enum import Enum
 bl_info = {"name": "rwx2blender",
            "author": "Julien Bardagi (Blaxar Waldarax)",
            "description": "Add-on to import Active Worlds RenderWare scripts (.rwx)",
-           "version": (0, 2, 7),
+           "version": (0, 2, 8),
            "blender": (2, 93, 0),
            "location": "File > Import...",
            "category": "Import-Export"}
@@ -94,8 +94,6 @@ class RwxState:
         self.mask = None
         # End of material related properties
 
-        self.transform = mu.Matrix.Identity(4)
-
     @property
     def mat_signature(self):
 
@@ -113,7 +111,7 @@ class RwxState:
         return "_".join([str(self.texture), str(self.mask), h.hexdigest()[:10]])
 
     def __str__(self):
-        return self.mat_signature()
+        return self.mat_signature
 
     def __repr__(self):
         return "<RwxState: %s>" % self.mat_signature
@@ -122,11 +120,13 @@ class RwxState:
 
 class RwxVertex:
 
-    def __init__(self, x, y, z, u = None, v = None):
+    def __init__(self, x, y, z, transform = mu.Matrix.Identity(4), u = None, v = None):
 
-        self.x = x
-        self.y = y
-        self.z = z
+        mat = transform @ mu.Vector([x, y, z, 1])
+
+        self.x = mat[0]
+        self.y = mat[1]
+        self.z = mat[2]
         self.u = u
         self.v = v
 
@@ -239,7 +239,7 @@ class RwxClump(RwxScope):
                "--clumps:%s" % os.linesep +\
                os.linesep.join(clumps)
 
-    def apply_proto(self, proto):
+    def apply_proto(self, proto, transform = mu.Matrix.Identity(4)):
 
         offset = len(self.vertices)
 
@@ -251,7 +251,7 @@ class RwxClump(RwxScope):
         self.shapes.extend(shapes)
 
         for i, vert in enumerate(proto.vertices):
-            mat = proto.state.transform @ mu.Vector([vert.x, vert.y, vert.z, 1])
+            mat = transform @ mu.Vector([vert.x, vert.y, vert.z, 1])
             self.vertices.append(RwxVertex(mat[0], mat[1], mat[2], u=vert.u, v=vert.v))
 
 class RwxShape:
@@ -367,11 +367,37 @@ class RwxParser:
 
     # End regex list
 
+    def _push_current_transform(self):
+
+        self._transform_stack.append(self._current_transform)
+        self._current_transform = mu.Matrix.Identity(4)
+
+
+    def _pop_current_transform(self):
+
+        self._current_transform = self._transform_stack.pop()
+
+
+    @property
+    def _final_transform(self):
+
+        transform = mu.Matrix.Identity(4)
+
+        for t in self._transform_stack:
+            transform = transform @ t
+
+        return transform @ self._current_transform
+
+
     def __init__(self, uri, report, default_surface=(0.0, 0.0, 0.0)):
 
         self._rwx_clump_stack = []
         self._rwx_proto_dict = {}
         self._current_scope = None
+        self._transform_stack = []
+        self._current_transform = mu.Matrix.Identity(4)
+
+        transform_before_proto = None
 
         rwx_file = open(uri, mode = 'r')
 
@@ -405,6 +431,7 @@ class RwxParser:
 
             res = self._clumpbegin_regex.match(line)
             if res:
+                self._push_current_transform()
                 rwx_clump = RwxClump(state = self._current_scope.state)
                 self._rwx_clump_stack[-1].clumps.append(rwx_clump)
                 self._rwx_clump_stack.append(rwx_clump)
@@ -413,6 +440,7 @@ class RwxParser:
 
             res = self._clumpend_regex.match(line)
             if res:
+                self._pop_current_transform()
                 self._rwx_clump_stack.pop()
                 self._current_scope = self._rwx_clump_stack[-1]
                 continue
@@ -422,17 +450,20 @@ class RwxParser:
                 name = res.group(2)
                 self._rwx_proto_dict[name] = RwxScope(state = self._current_scope.state)
                 self._current_scope = self._rwx_proto_dict[name]
+                transform_before_proto = self._current_transform.copy()
+                self._current_transform = mu.Matrix.Identity(4);
                 continue
 
             res = self._protoend_regex.match(line)
             if res:
                 self._current_scope = self._rwx_clump_stack[0]
+                self._current_transform = transform_before_proto
                 continue
 
             res = self._protoinstance_regex.match(line)
             if res:
                 name = res.group(2)
-                self._current_scope.apply_proto(self._rwx_proto_dict[name])
+                self._current_scope.apply_proto(self._rwx_proto_dict[name], self._final_transform)
                 continue
 
             res = self._texture_regex.match(line)
@@ -468,8 +499,8 @@ class RwxParser:
                 vprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
                 if res.group(7):
                     vprops.extend([ float(x[0]) for x in self._float_regex.findall(res.group(7)) ])
-                    self._current_scope.vertices.append(RwxVertex(vprops[0], vprops[1], vprops[2], u = vprops[3], v = vprops[4]))
-                else: self._current_scope.vertices.append(RwxVertex(vprops[0], vprops[1], vprops[2]))
+                    self._current_scope.vertices.append(RwxVertex(vprops[0], vprops[1], vprops[2], self._final_transform, u = vprops[3], v = vprops[4]))
+                else: self._current_scope.vertices.append(RwxVertex(vprops[0], vprops[1], vprops[2], self._final_transform))
                 continue
 
             res = self._color_regex.match(line)
@@ -487,7 +518,7 @@ class RwxParser:
             res = self._transform_regex.match(line)
             if res:
                 tprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
-                if len(tprops) == 16: self._current_scope.state.transform = mu.Matrix(list(zip(*[iter(tprops)]*4))).transposed()
+                if len(tprops) == 16: self._current_transform = mu.Matrix(list(zip(*[iter(tprops)]*4))).transposed()
                 continue
 
             res = self._rotate_regex.match(line)
@@ -495,24 +526,24 @@ class RwxParser:
                 rprops = [ int(x) for x in self._integer_regex.findall(res.group(2)) ]
                 if len(rprops) == 4:
                     if rprops[0]:
-                        self._current_scope.state.transform =\
-                            mu.Matrix.Rotation(radians(-rprops[3]), 4, 'X') @ self._current_scope.state.transform
+                        self._current_transform =\
+                            mu.Matrix.Rotation(radians(-rprops[3]), 4, 'X') @ self._current_transform
                     if rprops[1]:
-                        self._current_scope.state.transform =\
-                            mu.Matrix.Rotation(radians(-rprops[3]), 4, 'Y') @ self._current_scope.state.transform
+                        self._current_transform =\
+                            mu.Matrix.Rotation(radians(-rprops[3]), 4, 'Y') @ self._current_transform
                     if rprops[2]:
-                        self._current_scope.state.transform =\
-                            mu.Matrix.Rotation(radians(-rprops[3]), 4, 'Z') @ self._current_scope.state.transform
+                        self._current_transform =\
+                            mu.Matrix.Rotation(radians(-rprops[3]), 4, 'Z') @ self._current_transform
                 continue
 
             res = self._scale_regex.match(line)
             if res:
                 sprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
                 if len(sprops) == 3:
-                    self._current_scope.state.transform =\
+                    self._current_transform =\
                         mu.Matrix.Scale(sprops[0], 4, (1.0, 0.0, 0.0)) @\
                         mu.Matrix.Scale(sprops[1], 4, (0.0, 1.0, 0.0)) @\
-                        mu.Matrix.Scale(sprops[2], 4, (0.0, 0.0, 1.0)) @ self._current_scope.state.transform
+                        mu.Matrix.Scale(sprops[2], 4, (0.0, 0.0, 1.0)) @ self._current_transform
                 continue
 
             res = self._surface_regex.match(line)
@@ -553,7 +584,7 @@ class RwxParser:
 
             res = self._identity_regex.match(line)
             if res:
-                self._current_scope.state.transform = mu.Matrix.Identity(4)
+                self._current_transform = mu.Matrix.Identity(4)
                 continue
 
     def __call__(self):
@@ -575,10 +606,8 @@ def gather_vertices_recursive(clump):
 
     vertices = []
 
-    transform = clump.state.transform
-
     for v in clump.verts:
-        vert = transform @ mu.Vector([v[0], v[1], v[2], 1])
+        vert = mu.Vector([v[0], v[1], v[2], 1])
         vertices.append((vert[0], vert[1], vert[2]))
 
     for c in clump.clumps:
