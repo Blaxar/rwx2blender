@@ -317,10 +317,11 @@ class RwxObject:
 
     state = None
 
-    def __init__(self):
+    def __init__(self, name = None):
         self.protos = []
         self.clumps = []
         self.state = RwxState()
+        self.name = name
 
     def __str__(self):
 
@@ -397,6 +398,7 @@ class RwxParser:
         self._transform_stack = []
         self._current_transform = mu.Matrix.Identity(4)
 
+
         transform_before_proto = None
 
         rwx_file = open(uri, mode = 'r')
@@ -424,7 +426,7 @@ class RwxParser:
 
             res = self._modelbegin_regex.match(line)
             if res:
-                self._rwx_clump_stack.append(RwxObject())
+                self._rwx_clump_stack.append(RwxObject(os.path.basename(uri)))
                 self._current_scope = self._rwx_clump_stack[-1]
                 self._current_scope.state.surface = default_surface
                 continue
@@ -632,14 +634,132 @@ def gather_faces_recursive(clump, offset=0):
     offset += len(clump.verts)
 
     for c in clump.clumps:
-        tmp_faces, tmp_polys, offset = gather_faces_recursive(c, offset)
+        (tmp_faces, tmp_polys, offset) = gather_faces_recursive(c, offset)
         faces.extend(tmp_faces)
         polys.extend(tmp_polys)
 
-    return faces, polys, offset
+    return (faces, polys, offset)
 
 
-def make_materials_recursive(ob, clump, folder, report, tex_extension = "jpg", mask_extension = "zip"):
+def create_mesh(ob, mesh, verts, faces, polys, faces_state, polys_state, faces_uv, verts_uv):
+
+    # Create mesh from given verts, edges, faces. Either edges or
+    # faces should be [], or you're asking for problems
+    mesh.from_pydata(verts, [], faces)
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+
+    uv_layer = bm.loops.layers.uv.verify()
+
+    if uv_layer is None:
+        uv_layer = bm.loops.layers.uv.new()
+
+    # Adjust materials and UVs for faces
+    for i, f in enumerate(bm.faces):
+        f.material_index = ob.data.materials.keys().index(faces_state[i].mat_signature)
+        for j, l in enumerate(f.loops):
+            uv = faces_uv[i][j]
+            if uv[0] is not None and uv[1] is not None:
+                l[uv_layer].uv = uv
+
+    bm.verts.ensure_lookup_table()
+
+    # Now we need to fill polygons with triangles (make faces)
+    for i, poly in enumerate(polys):
+        bm_edges = []
+        bm_verts = []
+        bm_merge_verts = []
+
+        first_vert = bm.verts[poly[0][0]]
+        bm.verts.ensure_lookup_table()
+        prev_vert = first_vert
+        bm_verts.append(first_vert)
+        verts_uv.append((verts_uv[poly[0][0]][0], verts_uv[poly[0][0]][1]))
+
+        for edge in poly[:-1]:
+
+            if bm.verts[edge[1]] in bm_verts:
+                new_vert = bm.verts.new((verts[edge[1]][0], verts[edge[1]][1], verts[edge[1]][2]))
+                bm.verts.ensure_lookup_table()
+                bm_merge_verts.append((bm.verts[edge[1]], new_vert))
+                verts_uv.append((verts_uv[edge[1]][0], verts_uv[edge[1]][1]))
+            else:
+                new_vert = bm.verts[edge[1]]
+
+            bm_edge = bm.edges.get((prev_vert, new_vert))
+            if not bm_edge:
+                bm_edge = bm.edges.new((prev_vert, new_vert))
+
+            bm_edges.append(bm_edge)
+
+            bm.edges.ensure_lookup_table()
+            prev_vert = new_vert
+            bm_verts.append(new_vert)
+
+        bm_edge = bm.edges.get((prev_vert, first_vert))
+        if not bm_edge:
+            bm_edge = bm.edges.new((prev_vert, first_vert))
+
+        bm_edges.append(bm_edge)
+
+        bm.edges.ensure_lookup_table()
+
+        geom = edgeloop_fill(bm, edges=bm_edges)["faces"]
+
+        # adjust materials and UVs for polygons
+
+        for f in geom:
+            f.material_index = ob.data.materials.keys().index(polys_state[i].mat_signature)
+            for l in f.loops:
+                uv = verts_uv[l.vert.index]
+                if uv[0] is not None and uv[1] is not None:
+                    l[uv_layer].uv = uv
+
+        triangulate(bm, faces=geom)
+        bm.faces.ensure_lookup_table()
+
+        for merge_verts in bm_merge_verts:
+            pointmerge(bm, verts=merge_verts, merge_co=merge_verts[0].co)
+
+        bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+
+
+    bm.to_mesh(mesh)
+    bm.free()
+
+    mesh.use_auto_smooth = True
+    mesh.auto_smooth_angle = 3.14/3.0
+    mesh.calc_normals()
+    # Update mesh with new data
+    mesh.update(calc_edges=True)
+
+
+def make_object_recursive(clump, name, folder, report, tex_extension = "jpg", mask_extension = "zip", mesh = None, ob_id = 0):
+
+    m = bpy.data.meshes.new(f'{name}.mesh.{ob_id:04d}') if mesh is None else mesh
+    ob = bpy.data.objects.new(f'{name}.object.{ob_id:04d}', m)
+
+    make_materials(ob, clump, folder, report, tex_extension, mask_extension)
+
+    create_mesh(ob, m, clump.verts, clump.faces, clump.polys, clump.faces_state,
+                clump.polys_state, clump.faces_uv, clump.verts_uv)
+
+    bpy.context.collection.objects.link(ob)
+    ob.select_set(True)
+
+    new_ob_id = ob_id + 1
+
+    for c in clump.clumps:
+        sub_mesh = bpy.data.meshes.new(f'{name}.mesh.{new_ob_id:04d}')
+        (new_ob_id, last_ob) = make_object_recursive(c, name, folder, report, tex_extension, mask_extension, sub_mesh, new_ob_id)
+        last_ob.parent = ob
+        new_ob_id += 1
+
+    return (new_ob_id, ob)
+
+
+def make_materials(ob, clump, folder, report, tex_extension = "jpg", mask_extension = "zip"):
 
     for shape in clump.shapes:
         # Get material
@@ -744,8 +864,13 @@ def make_materials_recursive(ob, clump, folder, report, tex_extension = "jpg", m
         if mat_sign not in ob.data.materials.keys():
             ob.data.materials.append(mat)
 
+def make_materials_recursive(ob, clump, folder, report, tex_extension = "jpg", mask_extension = "zip"):
+
+    make_materials(ob, clump, folder, report, tex_extension, mask_extension)
+
     for sub_clump in clump.clumps:
         make_materials_recursive(ob, sub_clump, folder, report, tex_extension, mask_extension)
+
 
 if in_blender:
 
@@ -759,48 +884,55 @@ if in_blender:
         filename_ext = ".rwx"
 
         filter_glob: StringProperty(
-            default="*.rwx",
-            options={'HIDDEN'},
+            default = "*.rwx",
+            options = {'HIDDEN'},
         )
+
         filepath: StringProperty(
-            name="File Path",
-            description="Filepath used for importing RenderWare .rwx file",
-            maxlen=1024,
-            default="",
-            subtype='FILE_PATH')
+            name = "File Path",
+            description = "Filepath used for importing RenderWare .rwx file",
+            maxlen = 1024,
+            default = "",
+            subtype = 'FILE_PATH')
+
         texturepath: StringProperty(
-            name="Texture Path",
-            description="Path to the texture directory",
-            maxlen=1024,
-            default="",
-            subtype='DIR_PATH')
+            name = "Texture Path",
+            description = "Path to the texture directory",
+            maxlen = 1024,
+            default = "",
+            subtype = 'DIR_PATH')
 
         default_ambient: FloatProperty(
-            name="Default Ambient",
-            description="Default ambient light intensity for materials",
-            default=0.0,
-            min=0.0,
-            max=1.0,
-            step=0.1,
-            precision=3)
+            name = "Default Ambient",
+            description = "Default ambient light intensity for materials",
+            default = 0.0,
+            min = 0.0,
+            max = 1.0,
+            step = 0.1,
+            precision = 3)
 
         default_diffuse: FloatProperty(
-            name="Default Diffuse",
-            description="Default diffuse light intensity for materials",
-            default=0.0,
-            min=0.0,
-            max=1.0,
-            step=0.1,
-            precision=3)
+            name = "Default Diffuse",
+            description = "Default diffuse light intensity for materials",
+            default = 0.0,
+            min = 0.0,
+            max = 1.0,
+            step = 0.1,
+            precision = 3)
 
         default_specular: FloatProperty(
-            name="Default Specular",
-            description="Default specular light intensity for materials",
-            default=0.0,
-            min=0.0,
-            max=1.0,
-            step=0.1,
-            precision=3)
+            name = "Default Specular",
+            description = "Default specular light intensity for materials",
+            default = 0.0,
+            min = 0.0,
+            max = 1.0,
+            step = 0.1,
+            precision = 3)
+
+        flat_hierarchy: BoolProperty(
+            name = "Flat Hierarchy",
+            description = "If checked: will load everything into a single mesh (no sub-object)",
+            default = False)
 
         def invoke(self, context, event):
             wm = bpy.context.window_manager
@@ -839,116 +971,43 @@ if in_blender:
                 self.report({'ERROR'}, "No clump registered after parsing the input file (likely not a proper .rwx).")
                 return {'CANCELLED'}
 
-            verts = gather_vertices_recursive(rwx_object.clumps[0])
-            faces, polys, offset = gather_faces_recursive(rwx_object.clumps[0])
-            faces_state = gather_attr_recursive(rwx_object.clumps[0], "faces_state")
-            polys_state = gather_attr_recursive(rwx_object.clumps[0], "polys_state")
-            faces_uv = gather_attr_recursive(rwx_object.clumps[0], "faces_uv")
-            verts_uv = gather_attr_recursive(rwx_object.clumps[0], "verts_uv")
+            if bpy.ops.object.mode_set.poll():
+                bpy.ops.object.mode_set(mode='OBJECT')
 
-            mesh = bpy.data.meshes.new('Mesh')
-            ob = bpy.data.objects.new('Object', mesh)
+            if bpy.ops.object.select_all.poll():
+                bpy.ops.object.select_all(action='DESELECT')
 
-            make_materials_recursive(ob, rwx_object.clumps[0], texturepath, self.report)
+            ob = None
 
-            # Create mesh from given verts, edges, faces. Either edges or
-            # faces should be [], or you ask for problems
-            mesh.from_pydata(verts, [], faces)
-            bm = bmesh.new()
-            bm.from_mesh(mesh)
+            if self.flat_hierarchy:
+                verts = gather_vertices_recursive(rwx_object.clumps[0])
+                (faces, polys, offset) = gather_faces_recursive(rwx_object.clumps[0])
+                faces_state = gather_attr_recursive(rwx_object.clumps[0], "faces_state")
+                polys_state = gather_attr_recursive(rwx_object.clumps[0], "polys_state")
+                faces_uv = gather_attr_recursive(rwx_object.clumps[0], "faces_uv")
+                verts_uv = gather_attr_recursive(rwx_object.clumps[0], "verts_uv")
 
-            uv_layer = bm.loops.layers.uv.verify()
+                name = os.path.basename(self.filepath)
 
-            if uv_layer is None:
-                uv_layer = bm.loops.layers.uv.new()
+                mesh = bpy.data.meshes.new(f'{name}.mesh')
+                ob = bpy.data.objects.new(f'{name}.object', mesh)
+                make_materials_recursive(ob, rwx_object.clumps[0], texturepath, self.report)
 
-            # Adjust materials and UVs for faces
-            for i, f in enumerate(bm.faces):
-                f.material_index = ob.data.materials.keys().index(faces_state[i].mat_signature)
-                for j, l in enumerate(f.loops):
-                    uv = faces_uv[i][j]
-                    if uv[0] is not None and uv[1] is not None:
-                        l[uv_layer].uv = uv
+                create_mesh(ob, mesh, verts, faces, polys, faces_state, polys_state, faces_uv, verts_uv)
 
-            bm.verts.ensure_lookup_table()
+                # Link object to scene
+                bpy.context.collection.objects.link(ob)
+                ob.select_set(True)
 
-            # Now we need to fill polygons with triangles (make faces)
-            for i, poly in enumerate(polys):
-                bm_edges = []
-                bm_verts = []
-                bm_merge_verts = []
-
-                first_vert = bm.verts[poly[0][0]]
-                bm.verts.ensure_lookup_table()
-                prev_vert = first_vert
-                bm_verts.append(first_vert)
-                verts_uv.append((verts_uv[poly[0][0]][0], verts_uv[poly[0][0]][1]))
-
-                for edge in poly[:-1]:
-
-                    if bm.verts[edge[1]] in bm_verts:
-                        new_vert = bm.verts.new((verts[edge[1]][0], verts[edge[1]][1], verts[edge[1]][2]))
-                        bm.verts.ensure_lookup_table()
-                        bm_merge_verts.append((bm.verts[edge[1]], new_vert))
-                        verts_uv.append((verts_uv[edge[1]][0], verts_uv[edge[1]][1]))
-                    else:
-                        new_vert = bm.verts[edge[1]]
-
-                    bm_edge = bm.edges.get((prev_vert, new_vert))
-                    if not bm_edge:
-                        bm_edge = bm.edges.new((prev_vert, new_vert))
-
-                    bm_edges.append(bm_edge)
-
-                    bm.edges.ensure_lookup_table()
-                    prev_vert = new_vert
-                    bm_verts.append(new_vert)
-
-                bm_edge = bm.edges.get((prev_vert, first_vert))
-                if not bm_edge:
-                    bm_edge = bm.edges.new((prev_vert, first_vert))
-
-                bm_edges.append(bm_edge)
-
-                bm.edges.ensure_lookup_table()
-
-                geom = edgeloop_fill(bm, edges=bm_edges)["faces"]
-
-                # adjust materials and UVs for polygons
-
-                for f in geom:
-                    f.material_index = ob.data.materials.keys().index(polys_state[i].mat_signature)
-                    for l in f.loops:
-                        uv = verts_uv[l.vert.index]
-                        if uv[0] is not None and uv[1] is not None:
-                            l[uv_layer].uv = uv
-
-                triangulate(bm, faces=geom)
-                bm.faces.ensure_lookup_table()
-
-                for merge_verts in bm_merge_verts:
-                    pointmerge(bm, verts=merge_verts, merge_co=merge_verts[0].co)
-
-                bm.verts.ensure_lookup_table()
-                bm.edges.ensure_lookup_table()
-
-
-            bm.to_mesh(mesh)
-            bm.free()
-
-            mesh.use_auto_smooth = True
-            mesh.auto_smooth_angle = 3.14/3.0
-            mesh.calc_normals()
+            else:
+                (new_ob_id, ob) = make_object_recursive(rwx_object.clumps[0], rwx_object.name, texturepath, self.report)
 
             ob.location = (0,0,0)
             ob.scale = (10,10,10)
             ob.rotation_euler = (radians(90), 0, 0)
             ob.show_name = True
-            # Link object to scene
-            bpy.context.collection.objects.link(ob)
 
-            # Update mesh with new data
-            mesh.update(calc_edges=True)
+            bpy.context.view_layer.objects.active = ob
 
             return {'FINISHED'}
 
