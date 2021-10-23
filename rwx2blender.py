@@ -20,7 +20,7 @@ import sys
 import os
 import re
 import fileinput
-from copy import copy
+from copy import deepcopy
 from math import radians
 import mathutils as mu
 from hashlib import md5
@@ -54,7 +54,7 @@ from enum import Enum
 bl_info = {"name": "rwx2blender",
            "author": "Julien Bardagi (Blaxar Waldarax)",
            "description": "Add-on to import Active Worlds RenderWare scripts (.rwx)",
-           "version": (0, 2, 8),
+           "version": (0, 2, 9),
            "blender": (2, 93, 0),
            "location": "File > Import...",
            "category": "Import-Export"}
@@ -145,7 +145,7 @@ class RwxScope:
 
     def __init__(self, state = RwxState()):
 
-        self.state = copy(state)
+        self.state = deepcopy(state)
         self.vertices = []
         self.shapes = []
 
@@ -243,7 +243,7 @@ class RwxClump(RwxScope):
 
         offset = len(self.vertices)
 
-        shapes = copy(proto.shapes)
+        shapes = deepcopy(proto.shapes)
         for shape in shapes:
             for i, vid in enumerate(shape.vertices_id):
                 shape.vertices_id[i] += offset
@@ -254,11 +254,12 @@ class RwxClump(RwxScope):
             mat = transform @ mu.Vector([vert.x, vert.y, vert.z, 1])
             self.vertices.append(RwxVertex(mat[0], mat[1], mat[2], u=vert.u, v=vert.v))
 
+
 class RwxShape:
 
     def __init__(self, state = RwxState()):
 
-        self.state = copy(state)
+        self.state = deepcopy(state)
         self.vertices_id = None
 
     def __call__(self):
@@ -342,10 +343,10 @@ class RwxParser:
     _integer_regex = re.compile("([-+]?[0-9]+)")
     _float_regex = re.compile("([+-]?([0-9]+([.][0-9]*)?|[.][0-9]+))")
     _non_comment_regex = re.compile("^(.*)#")
-    _modelbegin_regex = re.compile("^ *(modelbegin).*$", re.IGNORECASE)
-    _modelend_regex = re.compile("^ *(modelend).*$", re.IGNORECASE)
     _clumpbegin_regex = re.compile("^ *(clumpbegin).*$", re.IGNORECASE)
     _clumpend_regex = re.compile("^ *(clumpend).*$", re.IGNORECASE)
+    _transformbegin_regex = re.compile("^ *(transformbegin).*$", re.IGNORECASE)
+    _transformend_regex = re.compile("^ *(transformend).*$", re.IGNORECASE)
     _protobegin_regex = re.compile("^ *(protobegin) +([A-Za-z0-9_\\-]+).*$", re.IGNORECASE)
     _protoinstance_regex = re.compile("^ *(protoinstance) +([A-Za-z0-9_\\-]+).*$", re.IGNORECASE)
     _protoend_regex = re.compile("^ *(protoend).*$", re.IGNORECASE)
@@ -357,8 +358,9 @@ class RwxParser:
     _color_regex = re.compile("^ *(color)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}).*$", re.IGNORECASE)
     _opacity_regex = re.compile("^ *(opacity)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", re.IGNORECASE)
     _transform_regex = re.compile("^ *(transform)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){16}).*$", re.IGNORECASE)
+    _translate_regex = re.compile("^ *(translate)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}).*$", re.IGNORECASE)
     _scale_regex = re.compile("^ *(scale)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}).*$", re.IGNORECASE)
-    _rotate_regex = re.compile("^ *(rotate)(( +[-+]?[0-9]*){4})$", re.IGNORECASE)
+    _rotate_regex = re.compile("^ *(rotate)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){4})$", re.IGNORECASE)
     _surface_regex = re.compile("^ *(surface)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)){3}).*$", re.IGNORECASE)
     _ambient_regex = re.compile("^ *(ambient)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", re.IGNORECASE)
     _diffuse_regex = re.compile("^ *(diffuse)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)).*$", re.IGNORECASE)
@@ -379,6 +381,19 @@ class RwxParser:
         self._current_transform = self._transform_stack.pop()
 
 
+    def _save_current_transform(self):
+
+        self._transform_saves.append(deepcopy(self._current_transform))
+
+
+    def _load_current_transform(self):
+
+        if len(self._transform_saves) > 0:
+            self._current_transform = self._transform_saves.pop()
+        else:
+            self._current_transform = mu.Matrix.Identity(4)
+
+
     @property
     def _final_transform(self):
 
@@ -396,10 +411,16 @@ class RwxParser:
         self._rwx_proto_dict = {}
         self._current_scope = None
         self._transform_stack = []
+        self._transform_saves = []
         self._current_transform = mu.Matrix.Identity(4)
 
-
         transform_before_proto = None
+
+        # Ready root object group
+        self._rwx_clump_stack.append(RwxObject(os.path.basename(uri)))
+        self._current_scope = self._rwx_clump_stack[-1]
+        self._current_scope.state.surface = default_surface
+        self._push_current_transform()
 
         rwx_file = open(uri, mode = 'r')
 
@@ -424,13 +445,6 @@ class RwxParser:
             # Replace tabs with spaces
             line = line.replace('\t', ' ').strip()
 
-            res = self._modelbegin_regex.match(line)
-            if res:
-                self._rwx_clump_stack.append(RwxObject(os.path.basename(uri)))
-                self._current_scope = self._rwx_clump_stack[-1]
-                self._current_scope.state.surface = default_surface
-                continue
-
             res = self._clumpbegin_regex.match(line)
             if res:
                 self._push_current_transform()
@@ -446,6 +460,14 @@ class RwxParser:
                 self._rwx_clump_stack.pop()
                 self._current_scope = self._rwx_clump_stack[-1]
                 continue
+
+            res = self._transformbegin_regex.match(line)
+            if res:
+                self._save_current_transform()
+
+            res = self._transformend_regex.match(line)
+            if res:
+                self._load_current_transform()
 
             res = self._protobegin_regex.match(line)
             if res:
@@ -501,8 +523,13 @@ class RwxParser:
                 vprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
                 if res.group(7):
                     vprops.extend([ float(x[0]) for x in self._float_regex.findall(res.group(7)) ])
-                    self._current_scope.vertices.append(RwxVertex(vprops[0], vprops[1], vprops[2], self._final_transform, u = vprops[3], v = vprops[4]))
-                else: self._current_scope.vertices.append(RwxVertex(vprops[0], vprops[1], vprops[2], self._final_transform))
+                    self._current_scope.vertices.append(RwxVertex(vprops[0], vprops[1], vprops[2],
+                                                                  self._final_transform,
+                                                                  u = vprops[3],
+                                                                  v = vprops[4]))
+                else:
+                    self._current_scope.vertices.append(RwxVertex(vprops[0], vprops[1], vprops[2],
+                                                                  self._final_transform))
                 continue
 
             res = self._color_regex.match(line)
@@ -520,32 +547,45 @@ class RwxParser:
             res = self._transform_regex.match(line)
             if res:
                 tprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
-                if len(tprops) == 16: self._current_transform = mu.Matrix(list(zip(*[iter(tprops)]*4))).transposed()
+                if len(tprops) == 16:
+                    # Important Note: it seems the AW client always acts as if this element
+                    # (which is related to the projection plane) was equal to 1 when it was
+                    # set 0, hence why we always override this.
+                    if tprops[15] == 0.0:
+                        tprops[15] = 1
+
+                    self._current_transform = mu.Matrix(list(zip(*[iter(tprops)]*4))).transposed()
+                continue
+
+            res = self._translate_regex.match(line)
+            if res:
+                tprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
+                self._current_transform = self._current_transform @ mu.Matrix.Translation(mu.Vector(tprops))
                 continue
 
             res = self._rotate_regex.match(line)
             if res:
-                rprops = [ int(x) for x in self._integer_regex.findall(res.group(2)) ]
+                rprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
                 if len(rprops) == 4:
                     if rprops[0]:
                         self._current_transform =\
-                            mu.Matrix.Rotation(radians(-rprops[3]), 4, 'X') @ self._current_transform
+                            self._current_transform @ mu.Matrix.Rotation(radians(rprops[3]*rprops[0]), 4, 'X')
                     if rprops[1]:
                         self._current_transform =\
-                            mu.Matrix.Rotation(radians(-rprops[3]), 4, 'Y') @ self._current_transform
+                            self._current_transform @ mu.Matrix.Rotation(radians(rprops[3]*rprops[1]), 4, 'Y')
                     if rprops[2]:
                         self._current_transform =\
-                            mu.Matrix.Rotation(radians(-rprops[3]), 4, 'Z') @ self._current_transform
+                            self._current_transform @ mu.Matrix.Rotation(radians(rprops[3]*rprops[2]), 4, 'Z')
                 continue
 
             res = self._scale_regex.match(line)
             if res:
                 sprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
                 if len(sprops) == 3:
-                    self._current_transform =\
+                    self._current_transform = self._current_transform @\
                         mu.Matrix.Scale(sprops[0], 4, (1.0, 0.0, 0.0)) @\
                         mu.Matrix.Scale(sprops[1], 4, (0.0, 1.0, 0.0)) @\
-                        mu.Matrix.Scale(sprops[2], 4, (0.0, 0.0, 1.0)) @ self._current_transform
+                        mu.Matrix.Scale(sprops[2], 4, (0.0, 0.0, 1.0))
                 continue
 
             res = self._surface_regex.match(line)
