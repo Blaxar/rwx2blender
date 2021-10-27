@@ -54,7 +54,7 @@ from enum import Enum
 bl_info = {"name": "rwx2blender",
            "author": "Julien Bardagi (Blaxar Waldarax)",
            "description": "Add-on to import Active Worlds RenderWare scripts (.rwx)",
-           "version": (0, 2, 9),
+           "version": (0, 2, 10),
            "blender": (2, 93, 0),
            "location": "File > Import...",
            "category": "Import-Export"}
@@ -775,12 +775,13 @@ def create_mesh(ob, mesh, verts, faces, polys, faces_state, polys_state, faces_u
     mesh.update(calc_edges=True)
 
 
-def make_object_recursive(clump, name, folder, report, tex_extension = "jpg", mask_extension = "zip", mesh = None, ob_id = 0):
+def make_object_recursive(clump, name, folder, report, tex_extension = "jpg", mask_extension = "zip", mesh = None,
+                          ob_id = 0, animation_interval = 5):
 
     m = bpy.data.meshes.new(f'{name}.mesh.{ob_id:04d}') if mesh is None else mesh
     ob = bpy.data.objects.new(f'{name}.object.{ob_id:04d}', m)
 
-    make_materials(ob, clump, folder, report, tex_extension, mask_extension)
+    make_materials(ob, clump, folder, report, tex_extension, mask_extension, animation_interval)
 
     create_mesh(ob, m, clump.verts, clump.faces, clump.polys, clump.faces_state,
                 clump.polys_state, clump.faces_uv, clump.verts_uv)
@@ -792,14 +793,15 @@ def make_object_recursive(clump, name, folder, report, tex_extension = "jpg", ma
 
     for c in clump.clumps:
         sub_mesh = bpy.data.meshes.new(f'{name}.mesh.{new_ob_id:04d}')
-        (new_ob_id, last_ob) = make_object_recursive(c, name, folder, report, tex_extension, mask_extension, sub_mesh, new_ob_id)
+        (new_ob_id, last_ob) = make_object_recursive(c, name, folder, report, tex_extension, mask_extension,
+                                                     sub_mesh, new_ob_id, animation_interval)
         last_ob.parent = ob
         new_ob_id += 1
 
     return (new_ob_id, ob)
 
 
-def make_materials(ob, clump, folder, report, tex_extension = "jpg", mask_extension = "zip"):
+def make_materials(ob, clump, folder, report, tex_extension = "jpg", mask_extension = "zip", animation_interval = 5):
 
     for shape in clump.shapes:
         # Get material
@@ -832,44 +834,27 @@ def make_materials(ob, clump, folder, report, tex_extension = "jpg", mask_extens
                         if len(name_list) == 1:
                             os.makedirs(bmp_dir, exist_ok=True)
                             zipf.extract(name_list[0], path = bmp_dir)
+
+                            # Loading RGB texture
+                            im = Image.open(img_path)
+                            w, h = im.size
+                            rgb_chans = im.convert("RGB").split()
+                            im.close()
+
+                            # Loading alpha mask
                             bmp_path = os.path.join(bmp_dir, name_list[0])
                             im = Image.open(bmp_path)
-                            a_chan = im.split()[0].convert("L")
+                            im_cpy = im.resize((w, h))
                             im.close()
-                            im = Image.open(img_path)
-                            rgb_chans = im.convert("RGB").split()
+                            a_chan = im_cpy.split()[0].convert("L")
+                            im_cpy.close()
+
+                            # Merging and saving the final PNG result
                             rgba_chans = [rgb_chans[0], rgb_chans[1], rgb_chans[2], a_chan]
-                            im.close()
                             img_path = os.path.join(bmp_dir, "%s.%s" % (shape.state.texture, "png"))
                             im = Image.merge("RGBA", rgba_chans)
                             im.save(img_path)
                             im.close()
-
-                            # At this stage, we know our texture has transparency: we need to accomodate
-                            # the current shader pipeline for this so we clear existing links, effectively
-                            # unlinking the principled bsdf from the material surface
-                            mat.node_tree.links.clear()
-
-                            # We create a MixShader to handle texture transparency
-                            mix = mat.node_tree.nodes.new('ShaderNodeMixShader')
-
-                            # We link the Alpha socket from the TexImage node to the Fac socket
-                            # of the MixShader
-                            mat.node_tree.links.new(mix.inputs['Fac'], tex.outputs['Alpha'])
-
-                            # We create a Transparent BSDF Node and link it to the first 'Shader' socket
-                            # of the MixShader node
-                            transparent = mat.node_tree.nodes.new('ShaderNodeBsdfTransparent')
-                            mat.node_tree.links.new(mix.inputs[1], transparent.outputs['BSDF'])
-
-                            # We link the Principled BSDF output socket to the second MixShader 'Shader' socket
-                            mat.node_tree.links.new(mix.inputs[2], bsdf.outputs['BSDF'])
-
-                            # Get the material output node
-                            mat_output = mat.node_tree.nodes['Material Output']
-
-                            # We link the MixShader output to the material Surface input
-                            mat.node_tree.links.new(mat_output.inputs['Surface'], mix.outputs['Shader'])
 
                             mat.blend_method = 'BLEND'
 
@@ -877,6 +862,36 @@ def make_materials(ob, clump, folder, report, tex_extension = "jpg", mask_extens
 
                 # Link TexImage Node to BSDF node
                 mat.node_tree.links.new(bsdf.inputs['Base Color'], tex.outputs['Color'])
+                mat.node_tree.links.new(bsdf.inputs['Alpha'], tex.outputs['Alpha'])
+
+                # Evaluate of the texture is meant to be animated
+                if tex.image.size[1] != tex.image.size[0] and tex.image.size[1] % tex.image.size[0] == 0:
+
+                    # It does: we need to add additional nodes to the shader
+                    mapping = mat.node_tree.nodes.new('ShaderNodeMapping')
+                    tex_coord = mat.node_tree.nodes.new('ShaderNodeTexCoord')
+
+                    mat.node_tree.links.new(tex.inputs['Vector'], mapping.outputs['Vector'])
+                    mat.node_tree.links.new(mapping.inputs['Vector'], tex_coord.outputs['UV'])
+
+                    # Adjust mapping of the texture
+                    nb_y_tiles = int(tex.image.size[1] / tex.image.size[0])
+
+                    mapping.inputs["Scale"].default_value[1] = 1.0 / nb_y_tiles
+
+                    # Insert key frames, one for each step of the animation, including the loopback frame at the end
+                    for tile_idx in range(0, nb_y_tiles + 1):
+                        mapping.inputs["Location"].default_value[1] = (tile_idx % nb_y_tiles) * mapping.inputs["Scale"].default_value[1]
+                        mapping.inputs["Location"].keyframe_insert(data_path = "default_value", index = 1,
+                                                                   frame = tile_idx * animation_interval)
+
+                    # Set constant interpolation to correctly warp from tile to tile
+                    fcurve = mat.node_tree.animation_data.action.fcurves[0]
+                    for kfp in fcurve.keyframe_points:
+                        kfp.interpolation = 'CONSTANT'
+
+                    # Loop the animation
+                    fcurve.modifiers.new('CYCLES')
 
             else:
                 bsdf.inputs['Base Color'].default_value[:3] = shape.state.color
@@ -904,12 +919,13 @@ def make_materials(ob, clump, folder, report, tex_extension = "jpg", mask_extens
         if mat_sign not in ob.data.materials.keys():
             ob.data.materials.append(mat)
 
-def make_materials_recursive(ob, clump, folder, report, tex_extension = "jpg", mask_extension = "zip"):
 
-    make_materials(ob, clump, folder, report, tex_extension, mask_extension)
+def make_materials_recursive(ob, clump, folder, report, tex_extension = "jpg", mask_extension = "zip", animation_interval = 5):
+
+    make_materials(ob, clump, folder, report, tex_extension, mask_extension, animation_interval)
 
     for sub_clump in clump.clumps:
-        make_materials_recursive(ob, sub_clump, folder, report, tex_extension, mask_extension)
+        make_materials_recursive(ob, sub_clump, folder, report, tex_extension, mask_extension, animation_interval)
 
 
 if in_blender:
@@ -974,6 +990,11 @@ if in_blender:
             description = "If checked: will load everything into a single mesh (no sub-object)",
             default = False)
 
+        frames_per_animation_step: IntProperty(
+            name = "Frames per Animation Step",
+            description = "For animated textures: how many frames will occur before moving to the next tile",
+            default = 5)
+
         def invoke(self, context, event):
             wm = bpy.context.window_manager
             wm.fileselect_add(self)
@@ -1031,7 +1052,8 @@ if in_blender:
 
                 mesh = bpy.data.meshes.new(f'{name}.mesh')
                 ob = bpy.data.objects.new(f'{name}.object', mesh)
-                make_materials_recursive(ob, rwx_object.clumps[0], texturepath, self.report)
+                make_materials_recursive(ob, rwx_object.clumps[0], texturepath, self.report,
+                                         animation_interval = self.frames_per_animation_step)
 
                 create_mesh(ob, mesh, verts, faces, polys, faces_state, polys_state, faces_uv, verts_uv)
 
@@ -1040,7 +1062,8 @@ if in_blender:
                 ob.select_set(True)
 
             else:
-                (new_ob_id, ob) = make_object_recursive(rwx_object.clumps[0], rwx_object.name, texturepath, self.report)
+                (new_ob_id, ob) = make_object_recursive(rwx_object.clumps[0], rwx_object.name, texturepath, self.report,
+                                                        animation_interval = self.frames_per_animation_step)
 
             ob.location = (0,0,0)
             ob.scale = (10,10,10)
