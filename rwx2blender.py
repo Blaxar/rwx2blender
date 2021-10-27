@@ -832,14 +832,23 @@ def make_materials(ob, clump, folder, report, tex_extension = "jpg", mask_extens
                         if len(name_list) == 1:
                             os.makedirs(bmp_dir, exist_ok=True)
                             zipf.extract(name_list[0], path = bmp_dir)
+
+                            # Loading RGB texture
+                            im = Image.open(img_path)
+                            w, h = im.size
+                            rgb_chans = im.convert("RGB").split()
+                            im.close()
+
+                            # Loading alpha mask
                             bmp_path = os.path.join(bmp_dir, name_list[0])
                             im = Image.open(bmp_path)
-                            a_chan = im.split()[0].convert("L")
+                            im_cpy = im.resize((w, h))
                             im.close()
-                            im = Image.open(img_path)
-                            rgb_chans = im.convert("RGB").split()
+                            a_chan = im_cpy.split()[0].convert("L")
+                            im_cpy.close()
+
+                            # Merging and saving the final PNG result
                             rgba_chans = [rgb_chans[0], rgb_chans[1], rgb_chans[2], a_chan]
-                            im.close()
                             img_path = os.path.join(bmp_dir, "%s.%s" % (shape.state.texture, "png"))
                             im = Image.merge("RGBA", rgba_chans)
                             im.save(img_path)
