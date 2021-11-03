@@ -854,38 +854,13 @@ def make_materials(ob, clump, folder, report, tex_extension = "jpg", mask_extens
                             im.save(img_path)
                             im.close()
 
-                            # At this stage, we know our texture has transparency: we need to accomodate
-                            # the current shader pipeline for this so we clear existing links, effectively
-                            # unlinking the principled bsdf from the material surface
-                            mat.node_tree.links.clear()
-
-                            # We create a MixShader to handle texture transparency
-                            mix = mat.node_tree.nodes.new('ShaderNodeMixShader')
-
-                            # We link the Alpha socket from the TexImage node to the Fac socket
-                            # of the MixShader
-                            mat.node_tree.links.new(mix.inputs['Fac'], tex.outputs['Alpha'])
-
-                            # We create a Transparent BSDF Node and link it to the first 'Shader' socket
-                            # of the MixShader node
-                            transparent = mat.node_tree.nodes.new('ShaderNodeBsdfTransparent')
-                            mat.node_tree.links.new(mix.inputs[1], transparent.outputs['BSDF'])
-
-                            # We link the Principled BSDF output socket to the second MixShader 'Shader' socket
-                            mat.node_tree.links.new(mix.inputs[2], bsdf.outputs['BSDF'])
-
-                            # Get the material output node
-                            mat_output = mat.node_tree.nodes['Material Output']
-
-                            # We link the MixShader output to the material Surface input
-                            mat.node_tree.links.new(mat_output.inputs['Surface'], mix.outputs['Shader'])
-
                             mat.blend_method = 'BLEND'
 
                 tex.image = bpy.data.images.load(img_path)
 
                 # Link TexImage Node to BSDF node
                 mat.node_tree.links.new(bsdf.inputs['Base Color'], tex.outputs['Color'])
+                mat.node_tree.links.new(bsdf.inputs['Alpha'], tex.outputs['Alpha'])
 
             else:
                 bsdf.inputs['Base Color'].default_value[:3] = shape.state.color
