@@ -862,6 +862,21 @@ def make_materials(ob, clump, folder, report, tex_extension = "jpg", mask_extens
                 mat.node_tree.links.new(bsdf.inputs['Base Color'], tex.outputs['Color'])
                 mat.node_tree.links.new(bsdf.inputs['Alpha'], tex.outputs['Alpha'])
 
+                # Evaluate of the texture is meant to be animated
+                if tex.image.size[1] != tex.image.size[0] and tex.image.size[1] % tex.image.size[0] == 0:
+
+                    # It does: we need to add additional nodes to the shader
+                    mapping = mat.node_tree.nodes.new('ShaderNodeMapping')
+                    tex_coord = mat.node_tree.nodes.new('ShaderNodeTexCoord')
+
+                    mat.node_tree.links.new(tex.inputs['Vector'], mapping.outputs['Vector'])
+                    mat.node_tree.links.new(mapping.inputs['Vector'], tex_coord.outputs['UV'])
+
+                    # Adjust mapping of the texture
+                    nb_y_tiles = tex.image.size[1] / tex.image.size[0]
+
+                    mapping.inputs["Scale"].default_value[1] = 1 / nb_y_tiles
+
             else:
                 bsdf.inputs['Base Color'].default_value[:3] = shape.state.color
 
