@@ -799,7 +799,7 @@ def make_object_recursive(clump, name, folder, report, tex_extension = "jpg", ma
     return (new_ob_id, ob)
 
 
-def make_materials(ob, clump, folder, report, tex_extension = "jpg", mask_extension = "zip"):
+def make_materials(ob, clump, folder, report, tex_extension = "jpg", mask_extension = "zip", animation_interval = 5):
 
     for shape in clump.shapes:
         # Get material
@@ -877,6 +877,15 @@ def make_materials(ob, clump, folder, report, tex_extension = "jpg", mask_extens
 
                     mapping.inputs["Scale"].default_value[1] = 1 / nb_y_tiles
 
+                    # Insert key frames, one for each step of the animation
+                    for tile_idx in range(0, int(nb_y_tiles)):
+                        mapping.inputs["Location"].default_value[1] = tile_idx * mapping.inputs["Scale"].default_value[1]
+                        mapping.inputs["Location"].keyframe_insert(data_path="default_value", index=1, frame = tile_idx * animation_interval)
+
+                    # Set constant interpolation to correctly warp to each tile instead of smoothly sliding them
+                    for kfp in mat.node_tree.animation_data.action.fcurves[0].keyframe_points:
+                        kfp.interpolation = 'CONSTANT'
+
             else:
                 bsdf.inputs['Base Color'].default_value[:3] = shape.state.color
 
@@ -903,12 +912,13 @@ def make_materials(ob, clump, folder, report, tex_extension = "jpg", mask_extens
         if mat_sign not in ob.data.materials.keys():
             ob.data.materials.append(mat)
 
-def make_materials_recursive(ob, clump, folder, report, tex_extension = "jpg", mask_extension = "zip"):
 
-    make_materials(ob, clump, folder, report, tex_extension, mask_extension)
+def make_materials_recursive(ob, clump, folder, report, tex_extension = "jpg", mask_extension = "zip", animation_interval = 5):
+
+    make_materials(ob, clump, folder, report, tex_extension, mask_extension, animation_interval)
 
     for sub_clump in clump.clumps:
-        make_materials_recursive(ob, sub_clump, folder, report, tex_extension, mask_extension)
+        make_materials_recursive(ob, sub_clump, folder, report, tex_extension, mask_extension, animation_interval)
 
 
 if in_blender:
