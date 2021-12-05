@@ -54,7 +54,7 @@ from enum import Enum
 bl_info = {"name": "rwx2blender",
            "author": "Julien Bardagi (Blaxar Waldarax)",
            "description": "Add-on to import Active Worlds RenderWare scripts (.rwx)",
-           "version": (0, 2, 9),
+           "version": (0, 2, 10),
            "blender": (2, 93, 0),
            "location": "File > Import...",
            "category": "Import-Export"}
@@ -775,12 +775,13 @@ def create_mesh(ob, mesh, verts, faces, polys, faces_state, polys_state, faces_u
     mesh.update(calc_edges=True)
 
 
-def make_object_recursive(clump, name, folder, report, tex_extension = "jpg", mask_extension = "zip", mesh = None, ob_id = 0):
+def make_object_recursive(clump, name, folder, report, tex_extension = "jpg", mask_extension = "zip", mesh = None,
+                          ob_id = 0, animation_interval = 5):
 
     m = bpy.data.meshes.new(f'{name}.mesh.{ob_id:04d}') if mesh is None else mesh
     ob = bpy.data.objects.new(f'{name}.object.{ob_id:04d}', m)
 
-    make_materials(ob, clump, folder, report, tex_extension, mask_extension)
+    make_materials(ob, clump, folder, report, tex_extension, mask_extension, animation_interval)
 
     create_mesh(ob, m, clump.verts, clump.faces, clump.polys, clump.faces_state,
                 clump.polys_state, clump.faces_uv, clump.verts_uv)
@@ -792,7 +793,8 @@ def make_object_recursive(clump, name, folder, report, tex_extension = "jpg", ma
 
     for c in clump.clumps:
         sub_mesh = bpy.data.meshes.new(f'{name}.mesh.{new_ob_id:04d}')
-        (new_ob_id, last_ob) = make_object_recursive(c, name, folder, report, tex_extension, mask_extension, sub_mesh, new_ob_id)
+        (new_ob_id, last_ob) = make_object_recursive(c, name, folder, report, tex_extension, mask_extension,
+                                                     sub_mesh, new_ob_id, animation_interval)
         last_ob.parent = ob
         new_ob_id += 1
 
@@ -873,18 +875,23 @@ def make_materials(ob, clump, folder, report, tex_extension = "jpg", mask_extens
                     mat.node_tree.links.new(mapping.inputs['Vector'], tex_coord.outputs['UV'])
 
                     # Adjust mapping of the texture
-                    nb_y_tiles = tex.image.size[1] / tex.image.size[0]
+                    nb_y_tiles = int(tex.image.size[1] / tex.image.size[0])
 
-                    mapping.inputs["Scale"].default_value[1] = 1 / nb_y_tiles
+                    mapping.inputs["Scale"].default_value[1] = 1.0 / nb_y_tiles
 
-                    # Insert key frames, one for each step of the animation
-                    for tile_idx in range(0, int(nb_y_tiles)):
-                        mapping.inputs["Location"].default_value[1] = tile_idx * mapping.inputs["Scale"].default_value[1]
-                        mapping.inputs["Location"].keyframe_insert(data_path="default_value", index=1, frame = tile_idx * animation_interval)
+                    # Insert key frames, one for each step of the animation, including the loopback frame at the end
+                    for tile_idx in range(0, nb_y_tiles + 1):
+                        mapping.inputs["Location"].default_value[1] = (tile_idx % nb_y_tiles) * mapping.inputs["Scale"].default_value[1]
+                        mapping.inputs["Location"].keyframe_insert(data_path = "default_value", index = 1,
+                                                                   frame = tile_idx * animation_interval)
 
-                    # Set constant interpolation to correctly warp to each tile instead of smoothly sliding them
-                    for kfp in mat.node_tree.animation_data.action.fcurves[0].keyframe_points:
+                    # Set constant interpolation to correctly warp from tile to tile
+                    fcurve = mat.node_tree.animation_data.action.fcurves[0]
+                    for kfp in fcurve.keyframe_points:
                         kfp.interpolation = 'CONSTANT'
+
+                    # Loop the animation
+                    fcurve.modifiers.new('CYCLES')
 
             else:
                 bsdf.inputs['Base Color'].default_value[:3] = shape.state.color
@@ -983,6 +990,11 @@ if in_blender:
             description = "If checked: will load everything into a single mesh (no sub-object)",
             default = False)
 
+        frames_per_animation_step: IntProperty(
+            name = "Frames per Animation Step",
+            description = "For animated textures: how many frames will occur before moving to the next tile",
+            default = 5)
+
         def invoke(self, context, event):
             wm = bpy.context.window_manager
             wm.fileselect_add(self)
@@ -1040,7 +1052,8 @@ if in_blender:
 
                 mesh = bpy.data.meshes.new(f'{name}.mesh')
                 ob = bpy.data.objects.new(f'{name}.object', mesh)
-                make_materials_recursive(ob, rwx_object.clumps[0], texturepath, self.report)
+                make_materials_recursive(ob, rwx_object.clumps[0], texturepath, self.report,
+                                         animation_interval = self.frames_per_animation_step)
 
                 create_mesh(ob, mesh, verts, faces, polys, faces_state, polys_state, faces_uv, verts_uv)
 
@@ -1049,7 +1062,8 @@ if in_blender:
                 ob.select_set(True)
 
             else:
-                (new_ob_id, ob) = make_object_recursive(rwx_object.clumps[0], rwx_object.name, texturepath, self.report)
+                (new_ob_id, ob) = make_object_recursive(rwx_object.clumps[0], rwx_object.name, texturepath, self.report,
+                                                        animation_interval = self.frames_per_animation_step)
 
             ob.location = (0,0,0)
             ob.scale = (10,10,10)
