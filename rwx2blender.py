@@ -21,7 +21,7 @@ import os
 import re
 import fileinput
 from copy import deepcopy
-from math import radians
+from math import radians, cos, sin, pi
 import mathutils as mu
 from hashlib import md5
 import zipfile
@@ -54,7 +54,7 @@ from enum import Enum
 bl_info = {"name": "rwx2blender",
            "author": "Julien Bardagi (Blaxar Waldarax)",
            "description": "Add-on to import Active Worlds RenderWare scripts (.rwx)",
-           "version": (0, 2, 10),
+           "version": (0, 2, 11),
            "blender": (2, 93, 0),
            "location": "File > Import...",
            "category": "Import-Export"}
@@ -143,11 +143,12 @@ class RwxVertex:
 
 class RwxScope:
 
-    def __init__(self, state = RwxState()):
+    def __init__(self, parent, state = RwxState()):
 
         self.state = deepcopy(state)
         self.vertices = []
         self.shapes = []
+        self.parent = parent
 
     def __str__(self):
 
@@ -235,7 +236,7 @@ class RwxClump(RwxScope):
         clumps = ["----%s" % str(c) for c in clumps]
 
         return "clump:%s" % os.linesep +\
-               super().__str__()+os.linesep+\
+               super().__str__() + os.linesep+\
                "--clumps:%s" % os.linesep +\
                os.linesep.join(clumps)
 
@@ -366,9 +367,283 @@ class RwxParser:
     _diffuse_regex = re.compile("^ *(diffuse)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][-+][0-9]+)?).*$", re.IGNORECASE)
     _specular_regex = re.compile("^ *(specular)( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][-+][0-9]+)?).*$", re.IGNORECASE)
     _materialmode_regex = re.compile("^ *((add)?materialmode(s)?) +([A-Za-z0-9_\\-]+).*$", re.IGNORECASE)
+    _block_regex = re.compile("^ *(block)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)(e[-+][0-9]+)?){3}).*$", re.IGNORECASE)
+    _cone_regex = re.compile("^ *(cone)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)(e[-+][0-9]+)?){2}( +[-+]?[0-9]+)).*$", re.IGNORECASE)
+    _cylinder_regex = re.compile("^ *(cylinder)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)(e[-+][0-9]+)?){3}( +[-+]?[0-9]+)).*$", re.IGNORECASE)
+    _disc_regex = re.compile("^ *(disc)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)(e[-+][0-9]+)?){2}( +[-+]?[0-9]+)).*$", re.IGNORECASE)
+    _hemisphere_regex = re.compile("^ *(hemisphere)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)(e[-+][0-9]+)?)( +[-+]?[0-9]+)).*$", re.IGNORECASE)
+    _sphere_regex = re.compile("^ *(sphere)(( +[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)(e[-+][0-9]+)?)( +[-+]?[0-9]+)).*$", re.IGNORECASE)
     _identity_regex = re.compile("^identity$", re.IGNORECASE)
 
     # End regex list
+
+    def _begin_clump(self):
+
+        self._push_current_transform()
+        rwx_clump = RwxClump(parent = self._current_scope, state = self._current_scope.state)
+        self._current_scope.clumps.append(rwx_clump)
+        self._current_scope = rwx_clump
+
+
+    def _end_clump(self):
+
+        self._pop_current_transform()
+        self._current_scope = self._current_scope.parent
+
+
+    def _add_mesh(self, vertices, uvs, faces):
+
+        assert(len(vertices)%3 == 0)
+        assert(len(uvs)%2 == 0)
+        assert(len(vertices)/3 == len(uvs)/2)
+        assert(len(faces)%3 == 0)
+
+        self._begin_clump()
+
+        # Zip vertex positions (3 by 3) with UVs (2 by 2) to get a new RwxVertex per entry
+        for (vert, uv) in zip([vertices[i:i+3] for i in range(0, len(vertices), 3)],\
+                              [vertices[i:i+2] for i in range(0, len(uvs), 2)]):
+            self._current_scope.vertices.append(RwxVertex(vert[0], vert[1], vert[2],\
+                                                          self._final_transform,\
+                                                          uv[0], uv[1]))
+
+        for f in [faces[i:i+3] for i in range(0, len(faces), 3)]:
+            self._current_scope.shapes.append(RwxTriangle(f[0]+1, f[1]+1, f[2]+1,\
+                                                          state=self._current_scope.state))
+
+        self._end_clump()
+
+
+    def _make_vertex_circle(self, h, r, n, v = None):
+
+        if n < 3:
+            raise ValueError("Need at least 3 sides to make a vertex circle")
+
+        positions = []
+        uvs = []
+        vec = mu.Vector([r, 0, 0])
+        delta_rad = pi * 2 / n
+
+        for i in range(0, n):
+
+            positions.extend([vec.x, vec.y + h, vec.z])
+            vec = vec @ mu.Matrix.Rotation(delta_rad, 3, 'Y')
+
+            if v is None:
+                # No reference V value provided for UVs: assuming a circular cutout in the texture
+                uvs.extend([(cos(delta_rad*i)+1)/2, (sin(delta_rad*i)+1)/2])
+
+            else:
+                # V value provided: picking UVs along U axis with fixed V
+                uvs.extend([1/n*i, v])
+
+        return positions, uvs
+
+
+    def _add_block(self, w, h, d):
+
+        positions = [\
+	    -w/2, h/2, -d/2,\
+	    w/2, h/2, -d/2,\
+	    w/2, h/2, d/2,\
+	    -w/2, h/2, d/2,\
+	    -w/2, -h/2, -d/2,\
+	    w/2, -h/2, -d/2,\
+	    w/2, -h/2, d/2,\
+	    -w/2, -h/2, d/2]
+
+        uvs = [\
+	    0.0, 0.0,\
+	    1.0, 0.0,\
+	    1.0, 1.0,\
+	    0.0, 1.0,\
+	    1.0, 1.0,\
+	    0.0, 1.0,\
+	    0.0, 0.0,\
+	    1.0, 0.0]
+
+        faces = [\
+            0, 3, 1, 1, 3, 2,\
+	    0, 4, 3, 3, 4, 7,\
+	    3, 6, 2, 3, 7, 6,\
+	    6, 7, 5, 5, 7, 4,\
+	    1, 5, 0, 0, 5, 4,\
+	    2, 5, 1, 6, 5, 2]
+
+        self._add_mesh(positions, uvs, faces)
+
+
+    def _add_cone(self, h, r, n):
+
+        if n < 3:
+	    #Silently skip if the cone doesn't have enough faces on its base
+            pass
+
+        positions, uvs = self._make_vertex_circle(0, r, n)
+
+        positions.extend([0, h, 0])
+        uvs.extend([0.5, 0.5])
+
+        faces = []
+
+        for i in range(0, n):
+            faces.extend([n, (i+1)%n, i])
+
+        self._add_mesh(positions, uvs, faces)
+
+
+    def _add_cylinder(self, h, br, tr, n):
+
+        if n < 3:
+	    #Silently skip if the cylinder doesn't have enough faces on its base
+            pass
+
+        #Bottom vertex circle
+        positions, uvs = self._make_vertex_circle(0, br, n, 1.0)
+
+        #Top vertex circle
+        top_pos, top_uvs = self._make_vertex_circle(h, tr, n, 0.0)
+
+        positions.extend(top_pos)
+        uvs.extend(top_uvs)
+
+        first_top_id = n
+        faces = []
+
+        #We weave faces across both circles (up and down) to make a cylinder
+        for i in range(0, n):
+            faces.extend([first_top_id+i, (i+1)%n, i])
+            faces.extend([first_top_id+i, first_top_id+((i+1)%n), (i+1)%n])
+
+        self._add_mesh(positions, uvs, faces)
+
+
+    def _add_disc(self, h, r, n):
+
+        if n < 3:
+	    #Silently skip if the disc doesn't have enough faces on its base
+            pass
+
+        positions, uvs = self._make_vertex_circle(h, r, n)
+
+        faces = []
+
+        for i in range(0, n):
+            faces.extend([0, (i+1)%n, i])
+
+        self._add_mesh(positions, uvs, faces)
+
+
+    def _add_hemisphere(self, r, n):
+
+        if n < 2:
+            # Silently skip if the hemisphere doesn't have enough density
+            pass
+
+        nb_sides = n * 4
+        nb_segments = n
+        delta_rad = pi/(nb_segments*2)
+
+	# Bottom vertex circle
+        positions, uvs = self._make_vertex_circle(0, r, nb_sides, 1.0)
+
+        previous_level_id = 0
+        current_level_id = 0
+
+        faces = []
+
+	# Now that we have the base of the hemisphere: we build up from there to the top
+        for h in range(1, nb_segments):
+            current_level_id = previous_level_id+nb_sides
+            n_h = sin(delta_rad*h)
+            pos, uv = self._make_vertex_circle(n_h*r, cos(delta_rad*h)*r, nb_sides, n_h)
+
+            positions.extend(pos)
+            uvs.extend(uv)
+
+            #We weave faces across both circles (up and down) to make a cylinder
+            for i in range(0, nb_sides):
+                faces.extend([previous_level_id+i, current_level_id+i, previous_level_id+((i+1)%nb_sides),\
+                              previous_level_id+((i+1)%nb_sides), current_level_id+i,\
+                              current_level_id+((i+1)%nb_sides)])
+
+            previous_level_id = current_level_id
+
+	# We add the pointy top of the hemisphere
+        positions.extend([0, r, 0])
+        uvs.extend([0.5, 0.0])
+
+        top_id = int(len(positions)/3-1)
+
+	# We weave faces across the circle (starting from the pointy top) to make a cone
+        for i in range(0, nb_sides):
+            faces.extend([top_id, previous_level_id+((i+1)%nb_sides), previous_level_id+i])
+
+        self._add_mesh(positions, uvs, faces)
+
+
+    def _add_sphere(self, r, n):
+
+        if n < 2:
+	    # Silently skip if the sphere doesn't have enough density
+            pass
+
+        nb_sides = n*4
+        nb_segments = n
+        delta_rad = pi/(nb_segments*2)
+
+        # We add the pointy bottom of the sphere
+        positions = [0, -r, 0]
+        uvs = [0.5, 0.0]
+
+	# Bottom vertex circle (above pointy bottom)
+        _h = -nb_segments+1
+        n_h = sin(delta_rad*_h)
+        pos, uv = self._make_vertex_circle(n_h*r, cos(delta_rad*_h)*r, nb_sides, n_h)
+        positions.extend(pos)
+        uvs.extend(uv)
+
+        previous_level_id = 0
+        current_level_id = 1
+
+        faces = []
+
+	# We weave faces across the circle (starting from the pointy bottom) to make a cone
+        for i in range(0, nb_sides):
+            faces.extend([previous_level_id, current_level_id+i, current_level_id+(i+1)%nb_sides])
+
+        previous_level_id = current_level_id
+
+	# Now that we have the base of the sphere: we build up from there to the top
+        for h in range(_h+1, nb_segments):
+            current_level_id = previous_level_id+nb_sides
+            n_h = sin(delta_rad*h)
+            pos, uv = self._make_vertex_circle(n_h*r, cos(delta_rad*h)*r, nb_sides, n_h)
+
+            positions.extend(pos)
+            uvs.extend(uv)
+
+            # We weave faces across both circles (up and down) to make a cylinder
+            for i in range(0, nb_sides):
+                faces.extend([previous_level_id+i, current_level_id+i, previous_level_id+((i+1)%nb_sides),\
+                              previous_level_id+((i+1)%nb_sides), current_level_id+i,\
+                              current_level_id+((i+1)%nb_sides)])
+
+            previous_level_id = current_level_id
+
+	# We add the pointy top of the sphere
+        positions.extend([0, r, 0])
+        uvs.extend([0.5, 0.0])
+
+        current_level_id += nb_sides
+
+	# We weave faces across the circle (starting from the pointy top) to make a cone
+        for i in range(0, nb_sides):
+            faces.extend([previous_level_id+i, current_level_id,\
+                          previous_level_id+((i+1)%nb_sides)])
+
+        self._add_mesh(positions, uvs, faces)
+
 
     def _push_current_transform(self):
 
@@ -407,7 +682,6 @@ class RwxParser:
 
     def __init__(self, uri, report, default_surface=(0.0, 0.0, 0.0)):
 
-        self._rwx_clump_stack = []
         self._rwx_proto_dict = {}
         self._current_scope = None
         self._transform_stack = []
@@ -417,8 +691,8 @@ class RwxParser:
         transform_before_proto = None
 
         # Ready root object group
-        self._rwx_clump_stack.append(RwxObject(os.path.basename(uri)))
-        self._current_scope = self._rwx_clump_stack[-1]
+        self._rwx_object = RwxObject(os.path.basename(uri))
+        self._current_scope = self._rwx_object
         self._current_scope.state.surface = default_surface
         self._push_current_transform()
 
@@ -447,18 +721,12 @@ class RwxParser:
 
             res = self._clumpbegin_regex.match(line)
             if res:
-                self._push_current_transform()
-                rwx_clump = RwxClump(state = self._current_scope.state)
-                self._rwx_clump_stack[-1].clumps.append(rwx_clump)
-                self._rwx_clump_stack.append(rwx_clump)
-                self._current_scope = rwx_clump
+                self._begin_clump()
                 continue
 
             res = self._clumpend_regex.match(line)
             if res:
-                self._pop_current_transform()
-                self._rwx_clump_stack.pop()
-                self._current_scope = self._rwx_clump_stack[-1]
+                self._end_clump()
                 continue
 
             res = self._transformbegin_regex.match(line)
@@ -472,15 +740,15 @@ class RwxParser:
             res = self._protobegin_regex.match(line)
             if res:
                 name = res.group(2)
-                self._rwx_proto_dict[name] = RwxScope(state = self._current_scope.state)
+                self._rwx_proto_dict[name] = RwxClump(parent = self._current_scope, state = self._current_scope.state)
                 self._current_scope = self._rwx_proto_dict[name]
                 transform_before_proto = self._current_transform.copy()
-                self._current_transform = mu.Matrix.Identity(4);
+                self._current_transform = mu.Matrix.Identity(4)
                 continue
 
             res = self._protoend_regex.match(line)
             if res:
-                self._current_scope = self._rwx_clump_stack[0]
+                self._current_scope = self._rwx_object
                 self._current_transform = transform_before_proto
                 continue
 
@@ -624,13 +892,49 @@ class RwxParser:
                     self._current_scope.state.materialmode = MaterialMode.DOUBLE
                 continue
 
+            res = self._block_regex.match(line)
+            if res:
+                bprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
+                self._add_block(bprops[0], bprops[1], bprops[2])
+                continue
+
+            res = self._cone_regex.match(line)
+            if res:
+                cprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
+                self._add_cone(cprops[0], cprops[1], int(cprops[2]))
+                continue
+
+            res = self._cylinder_regex.match(line)
+            if res:
+                cprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
+                self._add_cylinder(cprops[0], cprops[1], cprops[2], int(cprops[3]))
+                continue
+
+            res = self._disc_regex.match(line)
+            if res:
+                dprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
+                self._add_disc(dprops[0], dprops[1], int(dprops[2]))
+                continue
+
+            res = self._hemisphere_regex.match(line)
+            if res:
+                hprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
+                self._add_hemisphere(hprops[0], int(hprops[1]))
+                continue
+
+            res = self._sphere_regex.match(line)
+            if res:
+                sprops = [ float(x[0]) for x in self._float_regex.findall(res.group(2)) ]
+                self._add_sphere(sprops[0], int(sprops[1]))
+                continue
+
             res = self._identity_regex.match(line)
             if res:
                 self._current_transform = mu.Matrix.Identity(4)
                 continue
 
     def __call__(self):
-        return self._rwx_clump_stack[0]
+        return self._rwx_object
 
 
 def gather_attr_recursive(clump, name):
