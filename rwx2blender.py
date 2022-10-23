@@ -54,7 +54,7 @@ from enum import Enum
 bl_info = {"name": "rwx2blender",
            "author": "Julien Bardagi (Blaxar Waldarax)",
            "description": "Add-on to import Active Worlds RenderWare scripts (.rwx)",
-           "version": (0, 2, 11),
+           "version": (0, 2, 12),
            "blender": (2, 93, 0),
            "location": "File > Import...",
            "category": "Import-Export"}
@@ -77,6 +77,28 @@ class MaterialMode(Enum):
     NONE = 1
     NULL = 2
     DOUBLE = 3
+
+
+def apply_proto_recursive(root, proto, transform = mu.Matrix.Identity(4)):
+
+    offset = len(root.vertices)
+
+    shapes = deepcopy(proto.shapes)
+    for shape in shapes:
+        for i, vid in enumerate(shape.vertices_id):
+            shape.vertices_id[i] += offset
+
+    root.shapes.extend(shapes)
+
+    for i, vert in enumerate(proto.vertices):
+        mat = transform @ mu.Vector([vert.x, vert.y, vert.z, 1])
+        root.vertices.append(RwxVertex(mat[0], mat[1], mat[2], u=vert.u, v=vert.v))
+
+    for sub_proto in proto.clumps:
+        sub_clump = RwxClump(parent = root, state = proto.state)
+        apply_proto_recursive(sub_clump, sub_proto, transform)
+        root.clumps.append(sub_clump)
+
 
 class RwxState:
 
@@ -115,7 +137,6 @@ class RwxState:
 
     def __repr__(self):
         return "<RwxState: %s>" % self.mat_signature
-
 
 
 class RwxVertex:
@@ -242,18 +263,7 @@ class RwxClump(RwxScope):
 
     def apply_proto(self, proto, transform = mu.Matrix.Identity(4)):
 
-        offset = len(self.vertices)
-
-        shapes = deepcopy(proto.shapes)
-        for shape in shapes:
-            for i, vid in enumerate(shape.vertices_id):
-                shape.vertices_id[i] += offset
-
-        self.shapes.extend(shapes)
-
-        for i, vert in enumerate(proto.vertices):
-            mat = transform @ mu.Vector([vert.x, vert.y, vert.z, 1])
-            self.vertices.append(RwxVertex(mat[0], mat[1], mat[2], u=vert.u, v=vert.v))
+        apply_proto_recursive(self, proto, transform)
 
 
 class RwxShape:
