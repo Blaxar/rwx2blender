@@ -1084,7 +1084,7 @@ def create_mesh(ob, mesh, verts, faces, polys, faces_state, polys_state, faces_u
 
     mesh.use_auto_smooth = True
     mesh.auto_smooth_angle = 3.14/3.0
-    mesh.calc_normals()
+    # mesh.calc_normals()
     # Update mesh with new data
     mesh.update(calc_edges=True)
 
@@ -1211,7 +1211,8 @@ def make_materials(ob, clump, folder, report, tex_extension = "jpg", mask_extens
                 bsdf.inputs['Base Color'].default_value[:3] = shape.state.color
 
             bsdf.inputs['Alpha'].default_value = shape.state.opacity
-            bsdf.inputs['Specular'].default_value = shape.state.surface[2]
+			bsdf.inputs['IOR'].default_value = 1.0
+            bsdf.inputs['Specular IOR Level'].default_value = shape.state.surface[2]
 
             mat.diffuse_color[:3] = shape.state.color
             mat.diffuse_color[3] = shape.state.opacity
