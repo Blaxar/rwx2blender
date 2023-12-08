@@ -39,14 +39,6 @@ except ModuleNotFoundError as mnf:
 else:
     in_blender = True
 
-try:
-    from PIL import Image
-except ModuleNotFoundError as mnf:
-    has_image = False
-else:
-    has_image = True
-
-
 
 from traceback import print_exc
 from enum import Enum
@@ -54,8 +46,8 @@ from enum import Enum
 bl_info = {"name": "rwx2blender",
            "author": "Julien Bardagi (Blaxar Waldarax)",
            "description": "Add-on to import Active Worlds RenderWare scripts (.rwx)",
-           "version": (0, 2, 12),
-           "blender": (2, 93, 0),
+           "version": (0, 3, 0),
+           "blender": (4, 0, 0),
            "location": "File > Import...",
            "category": "Import-Export"}
 
@@ -121,22 +113,22 @@ class RwxState:
 
         h = md5()
 
-        sign = [("%.3f" % x) for x in self.color]
-        sign.extend([("%.3f" % x) for x in self.surface])
-        sign.append("%.3f" % self.opacity)
+        sign = [f'{x:.3f}' for x in self.color]
+        sign.extend([f'{x:.3f}' for x in self.surface])
+        sign.append(f'{self.opacity:.3f}')
         sign.append(self.lightsampling.name)
         sign.append(self.geometrysampling.name)
         sign.extend([x.name for x in sorted(self.texturemodes)])
         sign.append(self.materialmode.name)
 
-        h.update("".join([str(x) for x in sign]).replace(".","").lower().encode("utf-8"))
-        return "_".join([str(self.texture), str(self.mask), h.hexdigest()[:10]])
+        h.update(''.join([str(x) for x in sign]).replace('.','').lower().encode('utf-8'))
+        return '_'.join([str(self.texture), str(self.mask), h.hexdigest()[:10]])
 
     def __str__(self):
         return self.mat_signature
 
     def __repr__(self):
-        return "<RwxState: %s>" % self.mat_signature
+        return f'<RwxState: {self.mat_signature}>'
 
 
 class RwxVertex:
@@ -152,7 +144,7 @@ class RwxVertex:
         self.v = v
 
     def __str__(self):
-        return "x:%s y:%s z:%s (u:%s, v:%s)" % (self.x, self.y, self.z, self.u, self.v)
+        return f'x:{self.x} y:{self.y} z:{self.z} (u:{self.u}, v:{self.v})'
 
     def __call__(self):
         return (self.x, self.y, self.z)
@@ -173,10 +165,10 @@ class RwxScope:
 
     def __str__(self):
 
-        return "vertices:%s" % os.linesep +\
-               os.linesep.join([ "-- %s" % (str(v),) for v in self.vertices ]) +\
-               "{0}shapes:{0}".format(os.linesep) +\
-               os.linesep.join([ "-- %s" % (str(s),) for s in self.shapes ])
+        return f'vertices:{os.linesep}' +\
+               os.linesep.join([ f'-- {(str(v),)}' for v in self.vertices ]) +\
+               f'{os.linesep}shapes:{os.linesep}' +\
+               os.linesep.join([ f'-- {(str(s),)}' for s in self.shapes ])
 
     @property
     def faces(self):
@@ -254,11 +246,11 @@ class RwxClump(RwxScope):
         cl = [ str(c).split(os.linesep) for c in self.clumps ]
         clumps = []
         for clump in cl: clumps.extend(clump)
-        clumps = ["----%s" % str(c) for c in clumps]
+        clumps = [f'----{str(c)}' for c in clumps]
 
-        return "clump:%s" % os.linesep +\
+        return f'clump:{os.linesep}' +\
                super().__str__() + os.linesep+\
-               "--clumps:%s" % os.linesep +\
+               f'--clumps:{os.linesep}' +\
                os.linesep.join(clumps)
 
     def apply_proto(self, proto, transform = mu.Matrix.Identity(4)):
@@ -340,10 +332,10 @@ class RwxObject:
         cl = [ str(c).split(os.linesep) for c in self.clumps ]
         clumps = []
         for clump in cl: clumps.extend(clump)
-        clumps = ["----%s" % str(c) for c in clumps]
+        clumps = [f'----{str(c)}' for c in clumps]
 
-        return "object:%s" % os.linesep +\
-               "--clumps:%s" % os.linesep +\
+        return f'object:{os.linesep}' +\
+               f'--clumps:{os.linesep}' +\
                os.linesep.join(clumps)
 
 
@@ -1084,12 +1076,11 @@ def create_mesh(ob, mesh, verts, faces, polys, faces_state, polys_state, faces_u
 
     mesh.use_auto_smooth = True
     mesh.auto_smooth_angle = 3.14/3.0
-    mesh.calc_normals()
     # Update mesh with new data
     mesh.update(calc_edges=True)
 
 
-def make_object_recursive(clump, name, folder, report, tex_extension = "jpg", mask_extension = "zip", mesh = None,
+def make_object_recursive(clump, name, folder, report, tex_extension = 'jpg', mask_extension = 'zip', mesh = None,
                           ob_id = 0, animation_interval = 5):
 
     m = bpy.data.meshes.new(f'{name}.mesh.{ob_id:04d}') if mesh is None else mesh
@@ -1115,7 +1106,7 @@ def make_object_recursive(clump, name, folder, report, tex_extension = "jpg", ma
     return (new_ob_id, ob)
 
 
-def make_materials(ob, clump, folder, report, tex_extension = "jpg", mask_extension = "zip", animation_interval = 5):
+def make_materials(ob, clump, folder, report, tex_extension = 'jpg', mask_extension = 'zip', animation_interval = 5):
 
     for shape in clump.shapes:
         # Get material
@@ -1131,54 +1122,41 @@ def make_materials(ob, clump, folder, report, tex_extension = "jpg", mask_extens
             mat.use_nodes = True
 
             # We get the existing Principeld BSDF node, we will need it in any case
-            bsdf = mat.node_tree.nodes["Principled BSDF"]
+            bsdf = mat.node_tree.nodes['Principled BSDF']
             tex = mat.node_tree.nodes.new('ShaderNodeTexImage')
+            mask = None
 
             if shape.state.texture and folder is not None:
-                img_path = os.path.join(folder, "%s.%s" % (shape.state.texture, tex_extension))
+                img_path = os.path.join(folder, f'{shape.state.texture}.{tex_extension}')
 
-                if shape.state.mask is not None and has_image:
+                if shape.state.mask is not None:
                     try:
-                        zipf = zipfile.ZipFile(os.path.join(folder, "%s.%s" % (shape.state.mask, mask_extension)), "r")
+                        zipf = zipfile.ZipFile(os.path.join(folder, f'{shape.state.mask}.{mask_extension}'), 'r')
                     except Exception as e:
                         report({'WARNING'}, str(e))
                     else:
+                        mask = mat.node_tree.nodes.new('ShaderNodeTexImage')
                         name_list = zipf.namelist()
-                        bmp_dir = os.path.join(tempfile.gettempdir(), "rwx2blender")
+                        bmp_dir = os.path.join(tempfile.gettempdir(), 'rwx2blender')
                         if len(name_list) == 1:
                             os.makedirs(bmp_dir, exist_ok=True)
                             zipf.extract(name_list[0], path = bmp_dir)
 
-                            # Loading RGB texture
-                            im = Image.open(img_path)
-                            w, h = im.size
-                            rgb_chans = im.convert("RGB").split()
-                            im.close()
-
                             # Loading alpha mask
                             bmp_path = os.path.join(bmp_dir, name_list[0])
-                            im = Image.open(bmp_path)
-                            im_cpy = im.resize((w, h))
-                            im.close()
-                            a_chan = im_cpy.split()[0].convert("L")
-                            im_cpy.close()
-
-                            # Merging and saving the final PNG result
-                            rgba_chans = [rgb_chans[0], rgb_chans[1], rgb_chans[2], a_chan]
-                            img_path = os.path.join(bmp_dir, "%s.%s" % (shape.state.texture, "png"))
-                            im = Image.merge("RGBA", rgba_chans)
-                            im.save(img_path)
-                            im.close()
-
+                            mask.image = bpy.data.images.load(bmp_path)
                             mat.blend_method = 'BLEND'
 
                 tex.image = bpy.data.images.load(img_path)
 
-                # Link TexImage Node to BSDF node
+                # Link texture TexImage Node to BSDF node
                 mat.node_tree.links.new(bsdf.inputs['Base Color'], tex.outputs['Color'])
-                mat.node_tree.links.new(bsdf.inputs['Alpha'], tex.outputs['Alpha'])
 
-                # Evaluate of the texture is meant to be animated
+                # Link mask TexImage Node to BSDF node as well (if applicable)
+                if mask is not None:
+                    mat.node_tree.links.new(bsdf.inputs['Alpha'], mask.outputs['Color'])
+
+                # Evaluate if the texture is meant to be animated
                 if tex.image.size[1] != tex.image.size[0] and tex.image.size[1] % tex.image.size[0] == 0:
 
                     # It does: we need to add additional nodes to the shader
@@ -1188,15 +1166,19 @@ def make_materials(ob, clump, folder, report, tex_extension = "jpg", mask_extens
                     mat.node_tree.links.new(tex.inputs['Vector'], mapping.outputs['Vector'])
                     mat.node_tree.links.new(mapping.inputs['Vector'], tex_coord.outputs['UV'])
 
+                    # Take the mask into account as well (if applicable)
+                    if mask is not None:
+                        mat.node_tree.links.new(mask.inputs['Vector'], mapping.outputs['Vector'])
+
                     # Adjust mapping of the texture
                     nb_y_tiles = int(tex.image.size[1] / tex.image.size[0])
 
-                    mapping.inputs["Scale"].default_value[1] = 1.0 / nb_y_tiles
+                    mapping.inputs['Scale'].default_value[1] = 1.0 / nb_y_tiles
 
                     # Insert key frames, one for each step of the animation, including the loopback frame at the end
                     for tile_idx in range(0, nb_y_tiles + 1):
-                        mapping.inputs["Location"].default_value[1] = (tile_idx % nb_y_tiles) * mapping.inputs["Scale"].default_value[1]
-                        mapping.inputs["Location"].keyframe_insert(data_path = "default_value", index = 1,
+                        mapping.inputs['Location'].default_value[1] = (tile_idx % nb_y_tiles) * mapping.inputs['Scale'].default_value[1]
+                        mapping.inputs['Location'].keyframe_insert(data_path = 'default_value', index = 1,
                                                                    frame = tile_idx * animation_interval)
 
                     # Set constant interpolation to correctly warp from tile to tile
@@ -1211,7 +1193,7 @@ def make_materials(ob, clump, folder, report, tex_extension = "jpg", mask_extens
                 bsdf.inputs['Base Color'].default_value[:3] = shape.state.color
 
             bsdf.inputs['Alpha'].default_value = shape.state.opacity
-            bsdf.inputs['Specular'].default_value = shape.state.surface[2]
+            bsdf.inputs['Specular IOR Level'].default_value = shape.state.surface[2]
 
             mat.diffuse_color[:3] = shape.state.color
             mat.diffuse_color[3] = shape.state.opacity
@@ -1234,7 +1216,7 @@ def make_materials(ob, clump, folder, report, tex_extension = "jpg", mask_extens
             ob.data.materials.append(mat)
 
 
-def make_materials_recursive(ob, clump, folder, report, tex_extension = "jpg", mask_extension = "zip", animation_interval = 5):
+def make_materials_recursive(ob, clump, folder, report, tex_extension = 'jpg', mask_extension = 'zip', animation_interval = 5):
 
     make_materials(ob, clump, folder, report, tex_extension, mask_extension, animation_interval)
 
@@ -1320,10 +1302,10 @@ if in_blender:
             filepath = self.filepath
             texturepath = self.texturepath
 
-            if texturepath is None or texturepath == "":
-                texturepath = os.path.join(os.path.split(os.path.dirname(filepath))[0], "textures")
+            if texturepath is None or texturepath == '':
+                texturepath = os.path.join(os.path.split(os.path.dirname(filepath))[0], 'textures')
                 if os.path.isdir(texturepath):
-                    self.report({'WARNING'}, "No texture directory specified, assuming %s" % texturepath)
+                    self.report({'WARNING'}, f"No texture directory specified, assuming '{texturepath}'")
                 else:
                     self.report({'WARNING'}, "No texture directory specified and could not guess any, no texture will be used.")
                     texturepath = None
@@ -1357,10 +1339,10 @@ if in_blender:
             if self.flat_hierarchy:
                 verts = gather_vertices_recursive(rwx_object.clumps[0])
                 (faces, polys, offset) = gather_faces_recursive(rwx_object.clumps[0])
-                faces_state = gather_attr_recursive(rwx_object.clumps[0], "faces_state")
-                polys_state = gather_attr_recursive(rwx_object.clumps[0], "polys_state")
-                faces_uv = gather_attr_recursive(rwx_object.clumps[0], "faces_uv")
-                verts_uv = gather_attr_recursive(rwx_object.clumps[0], "verts_uv")
+                faces_state = gather_attr_recursive(rwx_object.clumps[0], 'faces_state')
+                polys_state = gather_attr_recursive(rwx_object.clumps[0], 'polys_state')
+                faces_uv = gather_attr_recursive(rwx_object.clumps[0], 'faces_uv')
+                verts_uv = gather_attr_recursive(rwx_object.clumps[0], 'verts_uv')
 
                 name = os.path.basename(self.filepath)
 
