@@ -46,8 +46,8 @@ from enum import Enum
 bl_info = {"name": "rwx2blender",
            "author": "Julien Bardagi (Blaxar Waldarax)",
            "description": "Add-on to import Active Worlds RenderWare scripts (.rwx)",
-           "version": (0, 3, 0),
-           "blender": (4, 0, 0),
+           "version": (0, 4, 0),
+           "blender": (4, 1, 0),
            "location": "File > Import...",
            "category": "Import-Export"}
 
@@ -1052,8 +1052,7 @@ def create_mesh(ob, mesh, verts, faces, polys, faces_state, polys_state, faces_u
 
         geom = edgeloop_fill(bm, edges=bm_edges)["faces"]
 
-        # adjust materials and UVs for polygons
-
+        # Adjust materials and UVs for polygons
         for f in geom:
             f.material_index = ob.data.materials.keys().index(polys_state[i].mat_signature)
             for l in f.loops:
@@ -1074,8 +1073,6 @@ def create_mesh(ob, mesh, verts, faces, polys, faces_state, polys_state, faces_u
     bm.to_mesh(mesh)
     bm.free()
 
-    mesh.use_auto_smooth = True
-    mesh.auto_smooth_angle = 3.14/3.0
     # Update mesh with new data
     mesh.update(calc_edges=True)
 
@@ -1234,6 +1231,7 @@ if in_blender:
         bl_options = {'REGISTER'}
 
         filename_ext = ".rwx"
+        smooth_angle = pi / 3.0
 
         filter_glob: StringProperty(
             default = "*.rwx",
@@ -1365,6 +1363,7 @@ if in_blender:
             ob.scale = (10,10,10)
             ob.rotation_euler = (radians(90), 0, 0)
             ob.show_name = True
+            bpy.ops.object.shade_smooth_by_angle(angle = self.smooth_angle, keep_sharp_edges = True)
 
             bpy.context.view_layer.objects.active = ob
 
